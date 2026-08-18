@@ -1,0 +1,27 @@
+services:
+  codepen-clone:
+    container_name: codepen-clone
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    networks:
+      - web_gateway
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+networks:
+  web_gateway:
+    external: true

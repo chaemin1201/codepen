@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  app:
+    image: 'jc21/nginx-proxy-manager:latest'
+    restart: always
+    ports:
+      - '80:80'    # HTTP 접속
+      - '81:81'    # 관리자 화면 (회장님 전용)
+      - '443:443'  # HTTPS 접속
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+networks:
+  default:
+    name: web_gateway
+    external: true

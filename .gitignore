@@ -1,0 +1,45 @@
+# ─── Node.js & Next.js ──────────────────────────────
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# ─── 환경변수 / 시크릿 ───────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── 데이터베이스 ────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Playwright 인증 상태 (세션 쿠키) ────────────────
+playwright/.auth/
+
+# ─── 런타임 생성 파일 ─────────────────────────────────
+submissions/
+
+# ─── Nginx Proxy Manager 런타임 데이터 ───────────────
+# RSA 키, Let's Encrypt 인증서, 로그 등 민감 데이터 포함
+services/proxy/data/
+services/proxy/letsencrypt/
+
+# ─── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+
+# ─── 불필요한 파일 ────────────────────────────────────
+*.deb
+*.log
+
+# ─── Claude Code ─────────────────────────────────────
+.claude/
