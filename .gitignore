@@ -15,6 +15,7 @@ dist/
 *.db
 *.sqlite
 *.sqlite3
+codepen-backend/uploads/
 
 # ─── Playwright 인증 상태 (세션 쿠키) ────────────────
 playwright/.auth/
