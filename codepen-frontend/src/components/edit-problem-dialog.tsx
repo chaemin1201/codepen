@@ -32,9 +32,13 @@ import { DateAndTimePicker } from '@/components/ui/date-and-time-picker'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { Problem } from '@/types/problem'
 
+// 1. open, onOpenChange props 추가
 export type EditProblemDialogProps = {
   problem: Problem
-  onEdited?: () => void;
+  onEdited?: () => void
+  trigger?: React.ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 const createFormSchema = (originalDeadline: Date) => z.object({
@@ -44,7 +48,6 @@ const createFormSchema = (originalDeadline: Date) => z.object({
   starts_at: z.date(),
   deadline: z.date().refine(
     (date) => {
-      // Only validate if the date has changed from the original
       if (date.getTime() === originalDeadline.getTime()) {
         return true
       }
@@ -68,12 +71,31 @@ const createFormSchema = (originalDeadline: Date) => z.object({
   }
 })
 
-export const EditProblemDialog = ({ problem, onEdited }: EditProblemDialogProps) => {
-  const [open, setOpen] = React.useState(false)
+export const EditProblemDialog = ({
+  problem,
+  onEdited,
+  trigger,
+  open: controlledOpen,
+  onOpenChange: setControlledOpen,
+}: EditProblemDialogProps) => {
+  // 제어(Controlled) / 비제어(Uncontrolled) 상태 지원
+  const [internalOpen, setInternalOpen] = React.useState(false)
+  const isControlled = controlledOpen !== undefined
+  const isOpen = isControlled ? controlledOpen : internalOpen
+
+  const handleOpenChange = (newOpen: boolean) => {
+    if (isControlled) {
+      setControlledOpen?.(newOpen)
+    } else {
+      setInternalOpen(newOpen)
+    }
+  }
+
   const [isEditing, setIsEditing] = React.useState(false)
   const originalStartsAt = React.useMemo(() => new Date(problem.starts_at + 'Z'), [problem.starts_at])
   const originalDeadline = React.useMemo(() => new Date(problem.deadline + 'Z'), [problem.deadline])
   const formSchema = React.useMemo(() => createFormSchema(originalDeadline), [originalDeadline])
+  
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -98,9 +120,6 @@ export const EditProblemDialog = ({ problem, onEdited }: EditProblemDialogProps)
         body: JSON.stringify({
           ...data,
           group_id: problem.group_id,
-          // [버그 수정] 백엔드 PartialProblem이 category_id/question_count도
-          // 필수로 받는데 이 폼에는 해당 입력이 없어서 누락되어 있었습니다.
-          // 편집 폼에서 다루지 않는 값이므로 기존 값을 그대로 유지해서 보냅니다.
           category_id: problem.category_id,
           question_count: problem.question_count,
         }),
@@ -111,7 +130,7 @@ export const EditProblemDialog = ({ problem, onEdited }: EditProblemDialogProps)
       }
 
       toast.success('문제가 성공적으로 수정되었습니다.')
-      setOpen(false)
+      handleOpenChange(false)
       onEdited?.()
     } catch (error) {
       toast.error((error as Error).message || '알 수 없는 오류가 발생했습니다.')
@@ -119,23 +138,33 @@ export const EditProblemDialog = ({ problem, onEdited }: EditProblemDialogProps)
     setIsEditing(false)
   }
 
+  // 모달이 열릴 때 폼 데이터를 전달된 problem 값으로 갱신
   React.useEffect(() => {
-    form.reset({
-      title: problem.title,
-      description: problem.description,
-      difficulty: problem.difficulty,
-      starts_at: originalStartsAt,
-      deadline: originalDeadline,
-      hide_before_start: problem.hide_before_start,
-    })
-  }, [problem, form, originalStartsAt, originalDeadline])
+    if (isOpen) {
+      form.reset({
+        title: problem.title,
+        description: problem.description,
+        difficulty: problem.difficulty,
+        starts_at: originalStartsAt,
+        deadline: originalDeadline,
+        hide_before_start: problem.hide_before_start,
+      })
+    }
+  }, [isOpen, problem, form, originalStartsAt, originalDeadline])
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <form id='form-edit-problem' onSubmit={form.handleSubmit(onSubmit)}>
-        <DialogTrigger asChild>
-          <Button variant='outline' size='icon'><EditIcon /></Button>
-        </DialogTrigger>
+        {/* trigger가 주어졌거나 비제어 모드일 때만 Trigger 버튼을 렌더링 */}
+        {(trigger || !isControlled) && (
+          <DialogTrigger asChild>
+            {trigger || (
+              <Button variant='outline' size='icon'>
+                <EditIcon />
+              </Button>
+            )}
+          </DialogTrigger>
+        )}
         <DialogContent>
           <DialogHeader>
             <DialogTitle>문제 수정</DialogTitle>
@@ -267,7 +296,9 @@ export const EditProblemDialog = ({ problem, onEdited }: EditProblemDialogProps)
             <DialogClose asChild>
               <Button variant='outline' onClick={() => form.reset()}><XIcon /> 취소</Button>
             </DialogClose>
-            <Button type='submit' form='form-edit-problem' disabled={isEditing}>{isEditing ? <LoaderCircleIcon className='animate-spin' /> : <EditIcon />} 수정</Button>
+            <Button type='submit' form='form-edit-problem' disabled={isEditing}>
+              {isEditing ? <LoaderCircleIcon className='animate-spin' /> : <EditIcon />} 수정
+            </Button>
           </DialogFooter>
         </DialogContent>
       </form>

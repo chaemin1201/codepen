@@ -2,9 +2,28 @@
 
 import React, { Suspense } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { DownloadIcon, ExternalLinkIcon, FileCheckCornerIcon, FlagIcon, LoaderCircleIcon, SendIcon, TableIcon, XIcon } from 'lucide-react'
+import {
+  ExternalLinkIcon,
+  FlagIcon,
+  LoaderCircleIcon,
+  SendIcon,
+  XIcon,
+  PlusIcon,
+  PaperclipIcon,
+  SearchIcon,
+  GripVerticalIcon,
+  UsersIcon,
+  BarChart2Icon,
+  ClipboardCheckIcon,
+  GlobeIcon,
+  FileTextIcon,
+  PencilIcon,
+  Trash2Icon,
+  ArrowLeftIcon,
+  ClockIcon,
+} from 'lucide-react'
 
 import { Header } from '@/components/header'
 import { GroupProvider, useGroup } from '@/context/group-provider'
@@ -14,130 +33,442 @@ import { useSubmission } from '@/lib/useSubmission'
 import { useGroupOwner } from '@/lib/useGroupOwner'
 import { useCategories } from '@/lib/useCategories'
 import { useMe } from '@/context/me-provider'
-import { useQuery } from '@/lib/useQuery'
-import type { Submission } from '@/types/submission'
-import { DataTable } from '@/components/ui/data-table'
-import { submissionColumns } from './submission-columns'
+import { useQuestions } from '@/lib/useQuestions'
+import type { Question } from '@/types/question'
 import { fetcher } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
-import { BackButton } from '@/components/back-button'
-import { dateStringify } from '@/lib/date-stringify'
 import { EditProblemDialog } from '@/components/edit-problem-dialog'
-import { QuestionList } from '@/app/problem/problem-list'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from '@/components/ui/dialog'
 
-type VerificationStatus = 'verified' | 'tampered' | 'verifying' | 'unknown'
-
-// [구조 변경] 제출물 상세로 이동하는 링크를 예전엔 /groups/{groupId}/{problemId}/{submissionId}
-// 세그먼트로 만들었지만, 평탄 구조에서는 /submission 페이지가 groupId/problemId/submissionId를
-// 전부 쿼리스트링으로 받으므로 이 함수로 목적지를 만듭니다.
-const submissionHref = (groupId: number, problemId: number, submissionId: number) =>
-  `/submission?groupId=${groupId}&problemId=${problemId}&submissionId=${submissionId}`
-
-const OwnerOnlySubmissionLists = ({ problem }: {
-  problem: NonNullable<ReturnType<typeof useProblem>['problem']>
-}) => {
-  const { group } = useGroup()
-  const { me } = useMe()
-  const router = useRouter()
-  const { data: submissions, error } = useQuery<Submission[]>(`/api/submission/problem/${problem.problem_id}`, {
-    refreshInterval: 5000,
-  })
-  const [verificationStatus, setVerificationStatus] = React.useState<{ user_id: string; status: VerificationStatus }[]>(group!.members.map(member => ({
-    user_id: member.user_id,
-    status: 'unknown' as VerificationStatus,
-  })))
-  const [isVerifying, setIsVerifying] = React.useState(false)
-
-  const onVerifySubmissions = async () => {
-    setIsVerifying(true)
-    try {
-      setVerificationStatus(prevStatus => prevStatus.map(vs => ({ ...vs, status: 'verifying' })))
-      const results: { user_id: string; status: VerificationStatus }[] = await fetcher(`/api/submission/problem/${problem.problem_id}/verify_all`)
-      setVerificationStatus(results)
-      toast.success('모든 제출물 검증이 완료되었습니다.')
-    } catch (err) {
-      toast.error('제출물 검증 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
-    }
-    setIsVerifying(false)
+// --- 맞춘 확률 배지 ---
+const AccuracyBadge = ({ accuracy }: { accuracy: number | null }) => {
+  if (accuracy === null) {
+    return (
+      <div className="inline-flex flex-col items-center justify-center px-3 py-1 rounded-xl text-xs bg-slate-100/80 text-slate-500 border border-slate-200/60 w-[105px]">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-slate-400 font-bold">...</span>
+          <span className="text-[11px] font-medium">집계중</span>
+        </div>
+        <div className="w-full bg-slate-200 h-[3px] rounded-full mt-1" />
+      </div>
+    )
   }
 
-  if (error) {
-    toast.error('제출 정보를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
-  }
-
-  if (!submissions) {
-    return <Skeleton className='h-48 w-full' />
-  }
-
-  // [신규] "전체 학생 중 제출/미제출이 몇 명인지" 한눈에 보이는 요약 카운트
-  const totalStudents = group!.members.filter(member => member.user_id !== me!.user_id).length
-  const submittedCount = group!.members
-    .filter(member => member.user_id !== me!.user_id)
-    .filter(member => submissions.find(sub => sub.user_id === member.user_id)?.status === 'submitted')
-    .length
-  const notSubmittedCount = totalStudents - submittedCount
-
+  const isSuccess = accuracy >= 50
   return (
-    <>
-      <div className='flex flex-row gap-3 w-full'>
-        <div className='flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center'>
-          <p className='text-xs text-emerald-700 font-medium'>제출 완료</p>
-          <p className='text-2xl font-extrabold text-emerald-700'>{submittedCount}<span className='text-sm font-medium'>명</span></p>
-        </div>
-        <div className='flex-1 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-center'>
-          <p className='text-xs text-rose-700 font-medium'>미제출</p>
-          <p className='text-2xl font-extrabold text-rose-700'>{notSubmittedCount}<span className='text-sm font-medium'>명</span></p>
-        </div>
-        <div className='flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center'>
-          <p className='text-xs text-slate-500 font-medium'>전체 학생</p>
-          <p className='text-2xl font-extrabold text-slate-700'>{totalStudents}<span className='text-sm font-medium'>명</span></p>
-        </div>
+    <div className={`inline-flex flex-col items-center justify-center px-3 py-1 rounded-xl text-xs border w-[105px] ${
+      isSuccess ? 'bg-emerald-50/70 text-emerald-700 border-emerald-200/80' : 'bg-rose-50/70 text-rose-700 border-rose-200/80'
+    }`}>
+      <div className="flex items-center gap-1.5">
+        <span className={`size-3.5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${
+          isSuccess ? 'bg-emerald-500' : 'bg-rose-500'
+        }`}>
+          {isSuccess ? 'S' : 'D'}
+        </span>
+        <span className="text-[11px] font-bold">{Math.round(accuracy)}%</span>
       </div>
-      <div className='flex flex-row gap-4 w-full'>
-        <Button className='grow' onClick={onVerifySubmissions} disabled={isVerifying}>
-          {isVerifying ? <LoaderCircleIcon className='animate-spin' /> : <FileCheckCornerIcon />} 모든 제출물 검증
-        </Button>
-        <Link href={`/api/problem/${problem.problem_id}/scores`} target='_blank' rel='noreferrer' className='grow'>
-          <Button variant='secondary' className='w-full'><TableIcon />모든 제출물 점수 다운로드 (CSV)</Button>
-        </Link>
-        <Link href={`/api/problem/${problem.problem_id}/download_all`} target='_blank' rel='noreferrer' className='grow'>
-          <Button variant='secondary' className='w-full'><DownloadIcon />모든 제출물 다운로드 (Zip)</Button>
-        </Link>
+      <div className="w-full bg-slate-200 h-[3px] rounded-full mt-1 overflow-hidden">
+        <div className={`h-full ${isSuccess ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${accuracy}%` }} />
       </div>
-      <DataTable
-        data={group!.members.filter(member => member.user_id !== me!.user_id).map(member => ({
-          ...member,
-          status: submissions.find(sub => sub.user_id === member.user_id)?.status ?? 'pending',
-          verificationStatus: verificationStatus.find(vs => vs.user_id === member.user_id)?.status,
-          score: submissions.find(sub => sub.user_id === member.user_id)?.score ?? null,
-        }))}
-        columns={submissionColumns}
-        rowClassName={(row) => (row.status === 'submitted' ? row.verificationStatus === 'tampered' ? 'bg-red-500/30 hover:bg-red-500/18' : 'bg-green-500/30 hover:bg-green-500/18' : 'cursor-default')}
-        onClickRow={(row) => {
-          if (row.status === 'pending') {
-            return
-          }
-          const submissionId = submissions.find(sub => sub.user_id === row.user_id)?.submission_id
-          if (!submissionId) return
-          router.push(submissionHref(group!.group_id, problem.problem_id, submissionId))
-        }}
-      />
-    </>
+    </div>
   )
 }
 
-function ProblemPageContent () {
+// --- 소문제 목록 컴포넌트 ---
+function QuestionList({
+  problemId,
+  groupId,
+  isOwner,
+  searchTerm,
+}: {
+  problemId: number
+  groupId: number
+  isOwner: boolean
+  searchTerm: string
+}) {
+  const router = useRouter()
+  const { questions, isLoading, mutate } = useQuestions(problemId)
+  const [isAddOpen, setIsAddOpen] = React.useState(false)
+  const [newTitle, setNewTitle] = React.useState('')
+  const [newDescription, setNewDescription] = React.useState('')
+  const [newCondition, setNewCondition] = React.useState('')
+  const [newExample, setNewExample] = React.useState('')
+  const [newScore, setNewScore] = React.useState('10')
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+
+  // 🟢 소문제 생성 핸들러 보완
+  const onAdd = async () => {
+    if (!newTitle.trim()) return toast.error('문제 제목을 입력해주세요.')
+    setIsSubmitting(true)
+    try {
+      await fetcher('/api/question', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problem_id: problemId,
+          title: newTitle,
+          description: newDescription,
+          condition: newCondition,
+          conditions: newCondition, // 🟢 백엔드 키값 호환성 확보
+          example_output: newExample,
+          score: Number(newScore) || 0,
+          order: questions?.length ?? 0,
+          is_visible: true,
+        }),
+      })
+      toast.success('소문제가 추가되었습니다.')
+      setNewTitle('')
+      setNewDescription('')
+      setNewCondition('')
+      setNewExample('')
+      setIsAddOpen(false)
+      
+      // 🟢 생성 직후 최신 목록 강제 수신
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('소문제 추가에 실패했습니다.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const toggleVisibility = async (q: Question) => {
+    try {
+      await fetcher(`/api/question/${q.question_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problem_id: q.problem_id,
+          title: q.title,
+          description: q.description,
+          condition: (q as any).condition || (q as any).conditions,
+          conditions: (q as any).condition || (q as any).conditions,
+          example_output: q.example_output,
+          score: q.score,
+          order: q.order,
+          is_visible: !q.is_visible,
+        }),
+      })
+      toast.success(q.is_visible ? '비공개로 변경되었습니다.' : '공개로 변경되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('공개 상태 변경 실패')
+    }
+  }
+
+  const onUpdateScore = async (q: Question, newScore: number) => {
+    try {
+      await fetcher(`/api/question/${q.question_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ score: newScore }),
+      })
+      toast.success('배점이 수정되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('배점 수정 실패')
+    }
+  }
+
+  const onFileUpload = async (q: Question, file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const res = await fetch(`/api/question/${q.question_id}/file`, {
+        method: 'POST',
+        body: formData,
+      })
+      
+      if (!res.ok) throw new Error('Upload failed')
+      
+      toast.success('첨부파일이 등록되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('파일 업로드 실패')
+    }
+  }
+
+  const onFileDelete = async (q: Question) => {
+    if (!confirm(`'${q.attachment_name}' 파일을 삭제하시겠습니까?`)) return
+    try {
+      await fetcher(`/api/question/${q.question_id}/file`, {
+        method: 'DELETE',
+      })
+      toast.success('첨부파일이 삭제되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('파일 삭제 실패')
+    }
+  }
+
+  const onDelete = async (q: Question) => {
+    if (!confirm(`'${q.title}' 문제를 삭제하시겠습니까?`)) return
+    try {
+      await fetcher(`/api/question/${q.question_id}`, { method: 'DELETE' })
+      toast.success('문제가 삭제되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('삭제 실패')
+    }
+  }
+
+  const filteredQuestions = questions?.filter((q) => q.title.toLowerCase().includes(searchTerm.toLowerCase()))
+
+  return (
+    <div className="w-full space-y-3">
+      <h2 className="text-xl font-bold text-slate-900">나의 문제들</h2>
+
+      {/* 문제 추가 다이얼로그 */}
+      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+        <DialogTrigger asChild>
+          <button id="add-question-trigger" className="hidden" />
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader><DialogTitle>새 문제 생성</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2 text-xs">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold">문제 이름</Label>
+              <Input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="예: 1번. 두 수의 합 구하기" />
+            </div>
+
+            {/* 🟢 설명과 조건을 각기 다른 입력창으로 작성 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">문제 설명</Label>
+                <Textarea 
+                  rows={4} 
+                  value={newDescription} 
+                  onChange={(e) => setNewDescription(e.target.value)} 
+                  placeholder="문제 상세 내용을 작성하세요." 
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">조건</Label>
+                <Textarea 
+                  rows={4} 
+                  value={newCondition} 
+                  onChange={(e) => setNewCondition(e.target.value)} 
+                  placeholder="문제 풀이에 필요한 제약 조건 등을 작성하세요." 
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold">결과 예시</Label>
+              <Textarea rows={3} value={newExample} onChange={(e) => setNewExample(e.target.value)} placeholder="입출력 예시를 작성하세요." />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold">배점</Label>
+              <Input type="number" value={newScore} onChange={(e) => setNewScore(e.target.value)} className="w-28" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={onAdd} disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold">
+              {isSubmitting ? <LoaderCircleIcon className="animate-spin" /> : '생성하기'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 데이터 테이블 */}
+      {isLoading ? (
+        <div className="py-8 flex justify-center"><LoaderCircleIcon className="animate-spin text-slate-400" /></div>
+      ) : !filteredQuestions || filteredQuestions.length === 0 ? (
+        <div className="py-8 text-center text-xs text-slate-400 border border-dashed rounded-xl bg-slate-50">등록된 문제가 없습니다.</div>
+      ) : (
+        <div className="overflow-x-auto border border-slate-200/80 rounded-xl shadow-2xs bg-white">
+          <table className="w-full text-xs text-center border-collapse">
+            <thead>
+              <tr className="bg-slate-100/90 text-slate-600 font-semibold border-b border-slate-200 h-11">
+                <th className="w-12 px-2 text-slate-400">
+                  <div className="flex items-center justify-center">
+                    <GripVerticalIcon className="size-3.5" />
+                  </div>
+                </th>
+                <th className="px-4 py-2 text-left font-medium">문제 제목</th>
+                <th className="px-3 py-2 font-medium">맞춘 확률</th>
+                <th className="px-3 py-2 font-medium">시도한 횟수</th>
+                <th className="px-3 py-2 font-medium">최종 제출 시간</th>
+                <th className="px-3 py-2 font-medium">배점</th>
+                <th className="px-3 py-2 font-medium">첨부파일</th>
+                {isOwner && <th className="px-3 py-2 font-medium">공개 상태</th>}
+                {isOwner && <th className="px-3 py-2 font-medium">문제 관리</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredQuestions.map((q, idx) => {
+                const rawDate = (q as any).my_attempt?.last_submitted_at
+                
+                let formattedDate = '-'
+                if (rawDate) {
+                  const utcDateString = typeof rawDate === 'string' && !rawDate.endsWith('Z') && !rawDate.includes('+')
+                    ? `${rawDate}Z`
+                    : rawDate
+                    
+                  formattedDate = new Date(utcDateString).toLocaleString('ko-KR', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true,
+                  })
+                }
+
+                return (
+                  <tr
+                    key={q.question_id}
+                    onClick={() => router.push(`/problem/${problemId}/${q.question_id}?groupId=${groupId}`)}
+                    className="hover:bg-slate-50/80 transition-colors h-14 cursor-pointer"
+                  >
+                    <td className="text-slate-400 font-medium">
+                      <div className="flex items-center justify-center gap-1">
+                        <GripVerticalIcon className="size-3.5 text-slate-300" />
+                        <span>{q.order ?? idx + 1}</span>
+                      </div>
+                    </td>
+                    <td className="text-left font-bold text-slate-800 px-4">{q.title}</td>
+                    <td><AccuracyBadge accuracy={q.stats?.accuracy ?? null} /></td>
+
+                    <td className="font-bold text-slate-800">
+                      {`${q.my_attempt?.attempts_count ?? 0}회`}
+                    </td>
+
+                    <td className="text-slate-600 font-mono text-[11px]">
+                      {formattedDate !== '-' ? (
+                        <span className="inline-flex items-center gap-1 bg-slate-50 px-2 py-1 rounded border border-slate-100 text-slate-700 font-semibold">
+                          <ClockIcon className="size-3 text-slate-400" />
+                          {formattedDate}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300">-</span>
+                      )}
+                    </td>
+
+                    <td className="font-bold text-slate-800" onClick={(e) => e.stopPropagation()}>
+                      {isOwner ? (
+                        <input
+                          type="number"
+                          defaultValue={q.score}
+                          onBlur={(e) => {
+                            const val = Number(e.target.value)
+                            if (val !== q.score) onUpdateScore(q, val)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.currentTarget.blur()
+                          }}
+                          className="w-14 text-center border border-slate-200 rounded px-1 py-0.5 text-xs focus:outline-none focus:border-emerald-500 font-bold"
+                        />
+                      ) : (
+                        q.score
+                      )}
+                    </td>
+
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center gap-1">
+                        {q.attachment_name ? (
+                          <div className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded-md text-[11px] font-medium transition-colors">
+                            <PaperclipIcon className="size-3 text-emerald-600" />
+                            <a
+                              href={`/uploads/questions/${q.question_id}_${q.attachment_name}`}
+                              download={q.attachment_name}
+                              className="max-w-[80px] truncate hover:underline"
+                              title={q.attachment_name}
+                            >
+                              {q.attachment_name}
+                            </a>
+                            {isOwner && (
+                              <div className="flex items-center gap-1 ml-0.5">
+                                <label className="cursor-pointer text-slate-400 hover:text-slate-600" title="파일 변경">
+                                  <PencilIcon className="size-2.5" />
+                                  <input
+                                    type="file"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0]
+                                      if (file) onFileUpload(q, file)
+                                    }}
+                                  />
+                                </label>
+                                <button
+                                  onClick={() => onFileDelete(q)}
+                                  className="text-slate-400 hover:text-rose-500 cursor-pointer"
+                                  title="파일 삭제"
+                                >
+                                  <Trash2Icon className="size-2.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <label className="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 cursor-pointer inline-flex items-center justify-center transition-colors">
+                            <PaperclipIcon className="size-3.5" />
+                            {isOwner && (
+                              <input
+                                type="file"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0]
+                                  if (file) onFileUpload(q, file)
+                                }}
+                              />
+                            )}
+                          </label>
+                        )}
+                      </div>
+                    </td>
+
+                    {isOwner && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => toggleVisibility(q)}
+                          className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors p-0.5 ${
+                            q.is_visible ? 'bg-emerald-500' : 'bg-slate-300'
+                          }`}
+                        >
+                          <span
+                            className={`inline-flex items-center justify-center size-5 rounded-full bg-white transition-transform ${
+                              q.is_visible ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          >
+                            <GlobeIcon className={`size-3 ${q.is_visible ? 'text-emerald-500' : 'text-slate-400'}`} />
+                          </span>
+                        </button>
+                      </td>
+                    )}
+
+                    {isOwner && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => onDelete(q)}
+                          className="text-rose-500 hover:underline font-medium text-[11px]"
+                        >
+                          삭제
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProblemPageContent() {
   const router = useRouter()
   const { me } = useMe()
   const { group } = useGroup()
@@ -145,205 +476,132 @@ function ProblemPageContent () {
   const { categories } = useCategories(group?.group_id ?? null)
   const { submission, isLoading, error, mutate } = useSubmission(problem?.problem_id ?? 0)
   const isOwner = useGroupOwner()
-  const [apiLoading, setApiLoading] = React.useState(false)
+  const [searchTerm, setSearchTerm] = React.useState('')
 
-  const onCreateSubmission = async () => {
-    setApiLoading(true)
-    try {
-      await fetcher(`/api/submission/${problem?.problem_id}`, {
-        method: 'POST',
-      })
-      toast.success('문제 풀이가 성공적으로 시작되었습니다.')
-      mutate()
-    } catch (error) {
-      toast.error('문제 풀이 시작 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
-    }
-    setApiLoading(false)
-  }
-
-  const onSubmitSubmission = async () => {
-    setApiLoading(true)
-    try {
-      await fetcher(`/api/submission/${submission?.submission_id}/submit`, {
-        method: 'POST',
-      })
-      toast.success('문제가 성공적으로 제출되었습니다.')
-      mutate()
-    } catch (error) {
-      toast.error('문제 제출 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
-    }
-    setApiLoading(false)
-  }
-
-  if (!problem || isLoading) {
-    return (
-      <Skeleton className='h-8 w-full' />
-    )
-  }
-
+  if (!problem || isLoading) return <Skeleton className="h-8 w-full" />
   if (error) {
-    toast.error('문제를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
+    toast.error('문제를 불러오는 중 오류가 발생했습니다.')
     return null
   }
 
+  const category = categories?.find((c) => c.category_id === problem.category_id)
+
   return (
-    <div className='min-h-screen bg-[#fafafa]'>
+    <div className="min-h-screen bg-[#fafafa]">
       <Header user={me} />
 
-      {/* 🍞 브레드크럼: 각 단계를 눌러 상위 화면으로 이동할 수 있습니다 */}
-      <header className='w-full bg-white border-b border-slate-100 px-6 py-2.5 flex items-center gap-2 text-xs text-slate-500'>
-        <span
-          className='cursor-pointer hover:underline hover:text-slate-700'
-          onClick={() => router.push('/groups')}
+      {/* 브레드크럼 */}
+      <header className="w-full bg-white border-b border-slate-100 px-6 py-3 flex items-center gap-3 text-xs text-slate-500">
+        <button
+          onClick={() => router.back()}
+          className="size-8 rounded-lg border border-slate-300 flex items-center justify-center text-slate-600 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+          title="뒤로 가기"
         >
-          나의 그룹들
-        </span>
-        {group && (
-          <>
-            <span>&gt;</span>
-            <span
-              className='cursor-pointer hover:underline hover:text-slate-700'
-              onClick={() => router.push(`/problem?groupId=${group.group_id}`)}
-            >
-              📚 {group.group_name}
-            </span>
-          </>
-        )}
-        {(() => {
-          const category = categories?.find((c) => c.category_id === problem.category_id)
-          if (!category || !group) return null
-          return (
+          <ArrowLeftIcon className="size-4" />
+        </button>
+
+        <div className="flex items-center gap-2">
+          <span className="cursor-pointer hover:underline hover:text-slate-700" onClick={() => router.push('/groups')}>
+            나의 그룹들
+          </span>
+          {group && (
             <>
               <span>&gt;</span>
-              <span
-                className='cursor-pointer hover:underline hover:text-slate-700'
-                onClick={() => router.push(`/problem?groupId=${group.group_id}&categoryId=${category.category_id}`)}
-              >
-                {category.title}
+              <span className="cursor-pointer hover:underline hover:text-slate-700 flex items-center gap-1" onClick={() => router.push(`/problem?groupId=${group.group_id}`)}>
+                📚 {group.group_name}
               </span>
             </>
-          )
-        })()}
-        <span>&gt;</span>
-        <span className='font-medium text-slate-700'>{problem.title}</span>
+          )}
+          <span>&gt;</span>
+          <span className="font-medium text-slate-700 flex items-center gap-1">
+            <FileTextIcon className="size-3 text-slate-400" />
+            {category ? `${category.title} - ${problem.title}` : problem.title}
+          </span>
+        </div>
       </header>
 
-      <div className='flex flex-col gap-4 max-w-5xl mx-auto p-6'>
-        <div className='flex items-center justify-between'>
-          <div className='flex flex-row gap-4'>
-            <BackButton />
-            <h1 className='text-2xl font-bold'>{problem.title} 문제</h1>
+      <div className="flex flex-col gap-5 max-w-6xl mx-auto p-6">
+        {/* 상단 타이틀 및 액션 버튼 배치 */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-slate-100 rounded-lg text-slate-500">
+              <FileTextIcon className="size-6" />
+            </div>
+            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">{problem.title}</h1>
+            {isOwner && (
+              <EditProblemDialog
+                problem={problem}
+                onEdited={refresh}
+                trigger={
+                  <Button variant="ghost" size="icon" className="size-8 rounded-lg text-slate-400 hover:text-slate-600">
+                    <PencilIcon className="size-4" />
+                  </Button>
+                }
+              />
+            )}
           </div>
-          {isOwner && <EditProblemDialog problem={problem} onEdited={refresh} />}
+
+          {isOwner && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs font-semibold rounded-lg h-9 px-4 shadow-2xs"
+                onClick={() => router.push(`/problem/${problem.problem_id}/status?groupId=${group?.group_id}`)}
+              >
+                <BarChart2Icon className="size-3.5" /> 현황보기
+              </Button>
+
+              <Button
+                size="sm"
+                className="bg-[#d97706] hover:bg-[#b45309] text-white gap-1.5 text-xs font-semibold rounded-lg h-9 px-4 shadow-2xs"
+                onClick={() => router.push(`/submission?problemId=${problem.problem_id}&groupId=${group?.group_id}`)}
+              >
+                <ClipboardCheckIcon className="size-3.5" /> 채점하기
+              </Button>
+
+              <Button
+                size="sm"
+                className="bg-[#10b981] hover:bg-[#059669] text-white gap-1.5 text-xs font-semibold rounded-lg h-9 px-4 shadow-2xs"
+                onClick={() => {
+                  const addBtn = document.getElementById('add-question-trigger')
+                  if (addBtn) addBtn.click()
+                }}
+              >
+                <PlusIcon className="size-3.5" /> 문제 추가하기
+              </Button>
+            </div>
+          )}
         </div>
-        <p>{problem.description}</p>
 
-        <QuestionList problemId={problem.problem_id} groupId={problem.group_id} isOwner={isOwner} />
+        {/* 상단 검색 바 */}
+        <div className="relative w-full">
+          <SearchIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="검색하기..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 bg-white shadow-2xs placeholder:text-slate-400"
+          />
+        </div>
 
-        {
-          isOwner
-            ? (
-              <>
-                <p>평균 점수: {problem.avg_score?.toFixed(2) ?? '-'}, STD 점수: {problem.std_score?.toFixed(2) ?? '-'}</p>
-                <OwnerOnlySubmissionLists problem={problem} />
-              </>
-              )
-            : (
-                problem.starts_at && new Date(problem.starts_at + 'Z') > new Date()
-                  ? (
-                    <p>이런, 너무 일찍 오셨군요! 아직 문제가 시작되기 전입니다.</p>
-                    )
-                  : problem.deadline && new Date(problem.deadline + 'Z') < new Date()
-                    ? (
-                        submission?.status === 'submitted'
-                          ? (
-                            <div className='flex flex-col gap-2'>
-                              <div className='flex flex-col gap-2 items-center justify-center w-full h-fit py-4 rounded-md bg-green-300/30'>
-                                <p className='text-green-600 dark:text-green-400 font-medium text-center'>문제 제출이 정상적으로 완료되었습니다. 마감일 이후 수정은 저장되지 않습니다.</p>
-                                <Link href={submission.codepen_url} target='_blank' rel='noreferrer'>
-                                  <Button variant='outline'><ExternalLinkIcon /> CodePen 열기</Button>
-                                </Link>
-                              </div>
-                              <iframe className='w-full aspect-video' src={`/api/submission_files/${submission.filename}/dist/index.html`} sandbox='allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts allow-top-navigation-by-user-activation' allow='accelerometer *; ambient-light-sensor *; camera *; display-capture *; encrypted-media *; geolocation *; gyroscope *; microphone *; midi *; payment *; serial *; vr *; web-share *; xr-spatial-tracking *' allowFullScreen loading='lazy' />
-                            </div>
-                            )
-                          : (
-                            <div className='flex items-center justify-center w-full h-fit py-4 rounded-md bg-red-300/30'>
-                              <p className='text-red-600 dark:text-red-400 font-medium text-center'>문제 제출 마감일이 지났습니다. 마감일 이후 수정은 저장되지 않습니다.</p>
-                            </div>
-                            )
-                      )
-                    : submission
-                      ? (
-                          submission.status === 'submitted'
-                            ? (
-                              <div className='flex flex-col gap-2'>
-                                <div className='flex flex-col gap-2 items-center justify-center w-full h-fit py-4 rounded-md bg-green-300/30'>
-                                  <p className='text-green-600 dark:text-green-400 font-medium text-center'>문제가 제출되었습니다. 더 이상 수정하실 수 없습니다.</p>
-                                  <Link href={submission.codepen_url} target='_blank' rel='noreferrer'>
-                                    <Button variant='outline'><ExternalLinkIcon /> CodePen 열기</Button>
-                                  </Link>
-                                </div>
-                                <iframe className='w-full aspect-video' src={`/api/submission_files/${submission.filename}/dist/index.html`} sandbox='allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts allow-top-navigation-by-user-activation' allow='accelerometer *; ambient-light-sensor *; camera *; display-capture *; encrypted-media *; geolocation *; gyroscope *; microphone *; midi *; payment *; serial *; vr *; web-share *; xr-spatial-tracking *' allowFullScreen loading='lazy' />
-                              </div>
-                              )
-                            : (
-                              <div className='flex flex-col gap-2'>
-                                <div className='flex flex-col gap-2 items-center justify-center w-full h-fit py-4 rounded-md bg-blue-300/30'>
-                                  <p className='text-blue-600 dark:text-blue-400 font-medium text-center'>문제가 아직 제출되지 않았습니다. 제출 기한 내입니다.</p>
-                                  <Link href={submission.codepen_url} target='_blank' rel='noreferrer'>
-                                    <Button variant='outline'><ExternalLinkIcon /> CodePen 열기</Button>
-                                  </Link>
-                                </div>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button
-                                      disabled={apiLoading}
-                                    >
-                                      {apiLoading ? <LoaderCircleIcon className='animate-spin' /> : (<><SendIcon /> 문제 제출</>)}
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>문제 제출</AlertDialogTitle>
-                                      <AlertDialogDescription>
-                                        정말 지금 문제를 제출하시겠습니까? 더 이상 수정이 불가능하며, 이 작업은 되돌릴 수 없습니다.
-                                      </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel><XIcon /> 취소</AlertDialogCancel>
-                                      <AlertDialogAction onClick={onSubmitSubmission} disabled={apiLoading}>
-                                        {apiLoading ? <LoaderCircleIcon className='animate-spin' /> : <SendIcon />} 제출
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </div>
-                              )
-                        )
-                      : (
-                        <Button
-                          onClick={onCreateSubmission}
-                          disabled={apiLoading}
-                        >
-                          {apiLoading ? <LoaderCircleIcon className='animate-spin' /> : <><FlagIcon /> 문제 풀이 시작</>}
-                        </Button>
-                        )
-              )
-        }
+        {/* 소문제 목록 */}
+        {group && (
+          <QuestionList
+            problemId={problem.problem_id}
+            groupId={group.group_id}
+            isOwner={isOwner}
+            searchTerm={searchTerm}
+          />
+        )}
       </div>
     </div>
   )
 }
 
-// [구조 변경 복구] 예전엔 [groupId]/[problemId] 폴더의 layout.tsx 두 겹이
-// GroupProvider/ProblemProvider를 자동으로 감싸줬지만, 평탄 구조에는 그런 layout이
-// 없으므로 이 페이지에서 두 Provider를 직접 감쌉니다. 둘 다 useSearchParams를
-// 쓰므로 Suspense 경계도 함께 필요합니다. 진입 시
-// /problem/[problemId]?groupId=.. 형태로 두 값이 모두 있어야 합니다.
-export default function ProblemPage () {
+export default function ProblemPage() {
   return (
-    <Suspense fallback={<Skeleton className='h-8 w-full' />}>
+    <Suspense fallback={<Skeleton className="h-8 w-full" />}>
       <GroupProvider>
         <ProblemProvider>
           <ProblemPageContent />

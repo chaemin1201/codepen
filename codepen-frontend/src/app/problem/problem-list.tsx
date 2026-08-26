@@ -160,6 +160,29 @@ export function QuestionList ({ problemId, groupId, isOwner }: { problemId: numb
     }
   }
 
+  // [버그 수정] 공개 상태가 그냥 배지 텍스트라 눌러도 아무 일도 안 일어났습니다.
+  // 실제로 PATCH를 호출해서 공개/비공개를 토글하도록 만들었습니다.
+  const onToggleVisible = async (q: Question) => {
+    try {
+      await fetcher(`/api/question/${q.question_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problem_id: q.problem_id,
+          title: q.title,
+          description: q.description,
+          example_output: q.example_output,
+          score: q.score,
+          order: q.order,
+          is_visible: !q.is_visible,
+        }),
+      })
+      mutate()
+    } catch {
+      toast.error('공개 상태 변경에 실패했습니다.')
+    }
+  }
+
   const filteredQuestions = questions?.filter((q) => q.title.toLowerCase().includes(searchTerm.toLowerCase()))
 
   return (
@@ -168,8 +191,9 @@ export function QuestionList ({ problemId, groupId, isOwner }: { problemId: numb
         <div className='text-xl font-bold text-slate-900'>나의 문제들</div>
         {isOwner && (
           <div className='flex items-center gap-2 text-xs font-semibold'>
-            {/* ✏️ 현황보기 경로 쿼리스트링 방식으로 수정 */}
-            <button onClick={() => router.push(`/problem?groupId=${groupId}&problemId=${problemId}`)} className='flex items-center gap-1.5 px-3.5 py-2 bg-mygreen text-white rounded-lg hover:bg-mydarkgreen transition-colors shadow-2xs cursor-pointer'>
+            {/* [버그 수정] 존재하지 않는 /problem?problemId= 로 가고 있었어요.
+                실제 문제 상세(제출 현황) 페이지 경로로 고쳤습니다. */}
+            <button onClick={() => router.push(`/problem/${problemId}?groupId=${groupId}`)} className='flex items-center gap-1.5 px-3.5 py-2 bg-mygreen text-white rounded-lg hover:bg-mydarkgreen transition-colors shadow-2xs cursor-pointer'>
               <BarChart2Icon className='size-3.5' /> 현황보기
             </button>
             <GraderSettingsDialog groupId={groupId} />
@@ -211,8 +235,9 @@ export function QuestionList ({ problemId, groupId, isOwner }: { problemId: numb
               {filteredQuestions.map((q, idx) => (
                 <tr
                   key={q.question_id}
-                  /* ✏️ 문제 클릭 시 이동할 경로를 평탄화 구조(쿼리 파라미터)로 수정 */
-                  onClick={() => router.push(`/question?groupId=${groupId}&problemId=${problemId}&questionId=${q.question_id}`)}
+                  /* [버그 수정] 존재하지 않는 /question 라우트로 가고 있었어요.
+                     실제로 있는 /problem/[problemId]/[questionId] 경로로 고쳤습니다. */
+                  onClick={() => router.push(`/problem/${problemId}/${q.question_id}?groupId=${groupId}`)}
                   className='hover:bg-slate-50/60 transition-colors h-14 cursor-pointer'
                 >
                   <td className='text-slate-400 font-medium'><div className='flex items-center justify-center gap-0.5'><GripVerticalIcon className='size-3.5 text-slate-300 cursor-grab' /><span>{q.order ?? idx + 1}</span></div></td>
@@ -222,7 +247,7 @@ export function QuestionList ({ problemId, groupId, isOwner }: { problemId: numb
                   <td className='font-bold text-slate-800'>{q.stats?.total_correct ?? 0}</td>
                   <td className='font-bold text-slate-800'>{q.score}</td>
                   <td><button onClick={(e) => e.stopPropagation()} className='p-1 rounded-full bg-slate-100 text-slate-400 hover:text-slate-600'><PaperclipIcon className='size-3.5' /></button></td>
-                  {isOwner && (<td><span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${q.is_visible ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>{q.is_visible ? '공개' : '비공개'}</span></td>)}
+                  {isOwner && (<td><button onClick={(e) => { e.stopPropagation(); onToggleVisible(q) }} className={`px-2 py-0.5 text-[10px] font-bold rounded-md cursor-pointer transition-colors ${q.is_visible ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>{q.is_visible ? '공개' : '비공개'}</button></td>)}
                   {isOwner && (<td><button onClick={(e) => { e.stopPropagation(); onDelete(q) }} className='text-rose-500 hover:underline font-medium cursor-pointer'>삭제</button></td>)}
                 </tr>
               ))}

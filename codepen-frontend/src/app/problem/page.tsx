@@ -33,6 +33,7 @@ import { GroupProvider, useGroup } from '@/context/group-provider'
 import { useMe } from '@/context/me-provider'
 import { useGroupOwner } from '@/lib/useGroupOwner'
 import { useCategories } from '@/lib/useCategories'
+import { useQuery } from '@/lib/useQuery'
 import { fetcher } from '@/lib/fetcher'
 import type { Category as ApiCategory } from '@/types/category'
 import type { Problem as ApiProblem } from '@/types/problem'
@@ -84,16 +85,23 @@ const mapCategory = (c: ApiCategory): Category => ({
   isCurrentWeek: c.is_current,
 })
 
-const mapProblem = (p: ApiProblem): Problem => ({
-  id: String(p.problem_id),
-  title: p.title,
-  categoryId: p.category_id !== null ? String(p.category_id) : '',
-  createdAt: new Date(p.created_at).toLocaleDateString('ko-KR'),
-  questionCount: p.question_count,
-  description: p.description || undefined,
-  dateStr: new Date(p.starts_at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }),
-  timeStr: p.deadline ? '마감 · ' + new Date(p.deadline).toLocaleString('ko-KR') : '상시 제출',
-})
+const mapProblem = (p: any): Problem => {
+  // questions 배열 길이 우선 -> 없으면 question_count / questions_count 확인 -> 기본값 0
+  const count = Array.isArray(p.questions)
+    ? p.questions.length
+    : (p.question_count ?? p.questions_count ?? 0)
+
+  return {
+    id: String(p.problem_id),
+    title: p.title,
+    categoryId: p.category_id !== null ? String(p.category_id) : '',
+    createdAt: p.created_at ? new Date(p.created_at).toLocaleDateString('ko-KR') : '',
+    questionCount: count, // 👈 동적 문항 수 산출 반영
+    description: p.description || undefined,
+    dateStr: p.starts_at ? new Date(p.starts_at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }) : '',
+    timeStr: p.deadline ? '마감 · ' + new Date(p.deadline).toLocaleString('ko-KR') : '상시 제출',
+  }
+}
 
 function IntegratedGroupPageContent() {
   const router = useRouter()
@@ -106,13 +114,21 @@ function IntegratedGroupPageContent() {
   // 데이터 상태: 실제 API 응답을 화면용 셰이프로 매핑
   const categories: Category[] = (apiCategories ?? []).map(mapCategory)
   const problems: Problem[] = (group?.problems ?? []).map(mapProblem)
-  const members: Member[] = (group?.members ?? []).map((u) => ({
+  const members: Member[] = (group?.members ?? []).map((u: any) => ({
     id: u.user_id,
     name: u.username,
     studentId: u.student_no !== null ? String(u.student_no) : '-',
+    grade: u.grade, // 👈 학년 데이터 매핑 추가!
     role: group?.owner.user_id === u.user_id ? 'owner' : 'student',
     joinedAt: u.created_at ? u.created_at.slice(0, 10) : '',
   }))
+  // [버그 수정] "참여 중인 수강생" 등은 교수님을 빼고 세야 합니다.
+  const studentMembers = members.filter((m) => m.role !== 'owner')
+  // [버그 수정] 제출/전체 건수가 실데이터 없이 항상 "0 / 10"으로 고정 표시되고
+  // 있었습니다. 실제 출석률 API로 교체합니다.
+  const { data: attendance } = useQuery<Array<{ user_id: string; submitted_count: number; total_problems: number }>>(
+    isOwner && group ? `/api/group/${group.group_id}/attendance` : null,
+  )
 
   // 📂 카테고리 접기/펼치기 상태
   const [expandedCatIds, setExpandedCatIds] = useState<string[]>([])
@@ -777,7 +793,7 @@ function IntegratedGroupPageContent() {
     <DialogHeader className='border-b border-slate-100 pb-4'>
       <DialogTitle className='text-xl font-bold text-foreground flex items-center gap-2'>
         <UserCheckIcon className='size-5 text-[#589960]' />
-        참여 중인 수강생 <span className='text-xs font-normal text-slate-500'>({members.length}명)</span>
+        참여 중인 수강생 <span className='text-xs font-normal text-slate-500'>({studentMembers.length}명)</span>
       </DialogTitle>
     </DialogHeader>
 
@@ -794,11 +810,10 @@ function IntegratedGroupPageContent() {
       {/* 1. 수강생 목록 & 과제 제출 현황 (삭제 버튼 제거됨) */}
       <TabsContent value='members' className='mt-4 space-y-3'>
         <div className='max-h-80 overflow-y-auto pr-1 space-y-2.5'>
-          {members.map((m) => {
-            // (m as any)를 통해 TypeScript 타입 검사 우회
-            const memberObj = m as any
-            const submitted = memberObj.submittedAssignments ?? 0
-            const total = memberObj.totalAssignments ?? 10
+          {studentMembers.map((m) => {
+            const a = attendance?.find((r) => r.user_id === m.id)
+            const submitted = a?.submitted_count ?? 0
+            const total = a?.total_problems ?? 0
             const rate = total > 0 ? Math.round((submitted / total) * 100) : 0
 
             return (
@@ -846,65 +861,69 @@ function IntegratedGroupPageContent() {
             </h4>
           </div>
 
-          {/* 도넛 차트 시각화 */}
-          <div className='h-48 w-full flex items-center justify-center'>
-            <ResponsiveContainer width='100%' height='100%'>
-              <PieChart>
-                <Pie
-                  data={[
-                    { name: '1학년', value: members.filter(m => (m as any).grade === 1 || (m as any).grade === '1학년').length, color: '#4285F4' },
-                    { name: '2학년', value: members.filter(m => (m as any).grade === 2 || (m as any).grade === '2학년').length, color: '#34A853' },
-                    { name: '3학년', value: members.filter(m => (m as any).grade === 3 || (m as any).grade === '3학년').length, color: '#FBBC05' },
-                    { name: '4학년', value: members.filter(m => (m as any).grade === 4 || (m as any).grade === '4학년').length, color: '#EA4335' },
-                  ]}
-                  cx='50%'
-                  cy='50%'
-                  innerRadius={50}
-                  outerRadius={75}
-                  paddingAngle={3}
-                  dataKey='value'
-                >
-                  {[
-                    { color: '#4285F4' },
-                    { color: '#34A853' },
-                    { color: '#FBBC05' },
-                    { color: '#EA4335' },
-                  ].map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-      
-          {/* 요약 테이블 */}
-          <div className='border border-slate-100 rounded-xl overflow-hidden'>
-            <table className='w-full text-xs text-left'>
-              <thead className='bg-slate-50 border-b border-slate-100 text-slate-600 font-semibold'>
-                <tr>
-                  <th className='p-2.5 pl-4'>학년</th>
-                  <th className='p-2.5 text-right pr-4'>인원(명)</th>
-                </tr>
-              </thead>
-              <tbody className='divide-y divide-slate-100 text-slate-700'>
-                {[
-                  { name: '1학년', count: members.filter(m => (m as any).grade === 1 || (m as any).grade === '1학년').length, color: '#4285F4' },
-                  { name: '2학년', count: members.filter(m => (m as any).grade === 2 || (m as any).grade === '2학년').length, color: '#34A853' },
-                  { name: '3학년', count: members.filter(m => (m as any).grade === 3 || (m as any).grade === '3학년').length, color: '#FBBC05' },
-                  { name: '4학년', count: members.filter(m => (m as any).grade === 4 || (m as any).grade === '4학년').length, color: '#EA4335' },
-                ].map((row) => (
-                  <tr key={row.name} className='hover:bg-slate-50/50'>
-                    <td className='p-2 pl-4 flex items-center gap-2'>
-                      <span className='size-2.5 rounded-full' style={{ backgroundColor: row.color }} />
-                      {row.name}
-                    </td>
-                    <td className='p-2 text-right pr-4 font-semibold'>{row.count}명</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* 학년별 인원 계산 및 차트 영역 */}
+          {(() => {
+            const chartData = [
+              { name: '1학년', value: studentMembers.filter(m => (m as any).grade === 1 || (m as any).grade === '1학년' || (m as any).grade === '1').length, color: '#4285F4' },
+              { name: '2학년', value: studentMembers.filter(m => (m as any).grade === 2 || (m as any).grade === '2학년' || (m as any).grade === '2').length, color: '#34A853' },
+              { name: '3학년', value: studentMembers.filter(m => (m as any).grade === 3 || (m as any).grade === '3학년' || (m as any).grade === '3').length, color: '#FBBC05' },
+              { name: '4학년', value: studentMembers.filter(m => (m as any).grade === 4 || (m as any).grade === '4학년' || (m as any).grade === '4').length, color: '#EA4335' },
+            ]
+
+            const totalGradedStudents = chartData.reduce((acc, cur) => acc + cur.value, 0)
+
+            return (
+              <>
+                <div className='h-48 w-full flex items-center justify-center'>
+                  {totalGradedStudents > 0 ? (
+                    <PieChart width={280} height={192}>
+                      <Pie
+                        data={chartData}
+                        cx='50%'
+                        cy='50%'
+                        innerRadius={50}
+                        outerRadius={75}
+                        paddingAngle={3}
+                        dataKey='value'
+                      >
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  ) : (
+                    <div className='text-xs text-slate-400 font-medium py-10'>
+                      등록된 학년 정보가 없습니다.
+                    </div>
+                  )}
+                </div>
+
+                {/* 요약 테이블 */}
+                <div className='border border-slate-100 rounded-xl overflow-hidden'>
+                  <table className='w-full text-xs text-left'>
+                    <thead className='bg-slate-50 border-b border-slate-100 text-slate-600 font-semibold'>
+                      <tr>
+                        <th className='p-2.5 pl-4'>학년</th>
+                        <th className='p-2.5 text-right pr-4'>인원(명)</th>
+                      </tr>
+                    </thead>
+                    <tbody className='divide-y divide-slate-100 text-slate-700'>
+                      {chartData.map((row) => (
+                        <tr key={row.name} className='hover:bg-slate-50/50'>
+                          <td className='p-2 pl-4 flex items-center gap-2'>
+                            <span className='size-2.5 rounded-full' style={{ backgroundColor: row.color }} />
+                            {row.name}
+                          </td>
+                          <td className='p-2 text-right pr-4 font-semibold'>{row.value}명</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )
+          })()}
         </div>
       </TabsContent>
     </Tabs>

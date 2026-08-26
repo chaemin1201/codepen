@@ -260,22 +260,24 @@ function GroupSettingsContent () {
 
   const handleAcceptInvite = async (userId: number | string) => {
     try {
-      await fetcher(`/api/group/${group.group_id}/invites/${userId}/accept`, { method: 'POST' })
-      toast.success('가입 신청을 수락했습니다.')
-      await Promise.all([refreshGroup(), refreshInvites()])
-    } catch {
-      toast.error('수락 처리에 실패했습니다.')
-    }
+    // ❌ 기존: /accept 경로 포함됨 -> ✅ 수정: /accept 제거
+    await fetcher(`/api/group/${group.group_id}/invites/${userId}`, { method: 'POST' })
+    toast.success('가입 신청을 수락했습니다.')
+    await Promise.all([refreshGroup(), refreshInvites()])
+  } catch {
+    toast.error('수락 처리에 실패했습니다.')
+  }
   }
 
   const handleRejectInvite = async (userId: number | string) => {
     try {
-      await fetcher(`/api/group/${group.group_id}/invites/${userId}/reject`, { method: 'DELETE' })
-      toast.success('가입 신청을 거절했습니다.')
-      await refreshInvites()
-    } catch {
-      toast.error('거절 처리에 실패했습니다.')
-    }
+    // ❌ 기존: /reject 경로 포함됨 -> ✅ 수정: /reject 제거
+    await fetcher(`/api/group/${group.group_id}/invites/${userId}`, { method: 'DELETE' })
+    toast.success('가입 신청을 거절했습니다.')
+    await refreshInvites()
+  } catch {
+    toast.error('거절 처리에 실패했습니다.')
+  }
   }
 
   const examCategories = categories.filter((c) => c.type === 'exam')
@@ -341,9 +343,15 @@ function GroupSettingsContent () {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel className='rounded-xl text-xs'>취소</AlertDialogCancel>
-                    <AlertDialogAction onClick={onDeleteGroup} className='bg-rose-500 hover:bg-rose-600 rounded-xl text-xs'>
-                      삭제
-                    </AlertDialogAction>
+                    <AlertDialogAction
+          onClick={async (e) => {
+            e.preventDefault()
+            await onDeleteGroup()
+          }}
+          className='bg-rose-500 hover:bg-rose-600 rounded-xl text-xs'
+        >
+          삭제
+        </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>

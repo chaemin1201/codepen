@@ -29,30 +29,101 @@ class PartialUserEdit(BaseModel):
     position: str | None = None
     office: str | None = None
 
+# @router.post("")
+# async def create_user(partial_user: PartialUser, request: Request, response: Response):
+#     # [로컬 테스트용 임시 우회 - 배포 전 반드시 원복!]
+#     # 구글 로그인 없이 회원가입 화면을 테스트하기 위해 실제 세션 체크를
+#     # 잠깐 꺼뒀습니다. 아래 주석 처리된 부분이 실제 배포용 로직이고,
+#     # 지금은 그 대신 role/이름 기반으로 가짜 세션을 만들어서 씁니다.
+#     # ⚠️ 배포하기 전에 이 블록을 지우고 아래 주석을 다시 살려주세요.
+#     if not request.session.get("user"):
+#         if partial_user.role == UserRole.PROFESSOR:
+#             fake_sub = f"test_google_sub_prof_{partial_user.username}"
+#             fake_email = f"test_prof_{partial_user.username}@example.com"
+#         else:
+#             fake_sub = f"test_google_sub_{partial_user.student_no}_{partial_user.username}"
+#             fake_email = f"test_{partial_user.student_no}@example.com"
+#         request.session["user"] = {"sub": fake_sub, "email": fake_email}
+
+#     # user_data = request.session.get("user")
+#     # if not user_data:
+#     #     response.status_code = 401
+#     #     return {"error": "Unauthorized"}
+#     user_data = request.session["user"]
+
+#     with Session(engine) as session:
+#         existing_user = session.get(User, user_data["sub"])
+#         if existing_user:
+#             response.status_code = 400
+#             return {"error": "User already exists"}
+
+#         # [신규] 이메일 중복 확인 (구글 계정 기준이라 사실상 항상 유니크하지만 방어적으로 확인)
+#         existing_email = session.exec(
+#             select(User).where(User.email == user_data["email"])
+#         ).first()
+#         if existing_email:
+#             response.status_code = 400
+#             return {"error": "Email already exists"}
+
+#         if partial_user.role == UserRole.PROFESSOR:
+#             user = User(
+#                 user_id=user_data["sub"],
+#                 username=partial_user.username,
+#                 email=user_data["email"],
+#                 role=UserRole.PROFESSOR,
+#                 department=partial_user.department,
+#                 position=partial_user.position,
+#                 office=partial_user.office,
+#             )
+#         else:
+#             # [신규] 학번 중복 확인
+#             if partial_user.student_no is not None:
+#                 existing_student_no = session.exec(
+#                     select(User).where(User.student_no == partial_user.student_no)
+#                 ).first()
+#                 if existing_student_no:
+#                     response.status_code = 400
+#                     return {"error": "Student number already exists"}
+#             user = User(
+#                 user_id=user_data["sub"],
+#                 username=partial_user.username,
+#                 email=user_data["email"],
+#                 role=UserRole.STUDENT,
+#                 student_no=partial_user.student_no,
+#                 grade=partial_user.grade,
+#                 major=partial_user.major,
+#                 codepen_username=partial_user.codepen_username,
+#             )
+#         session.add(user)
+#         session.commit()
+#         session.refresh(user)
+#         return user
 @router.post("")
 async def create_user(partial_user: PartialUser, request: Request, response: Response):
-    # [배포 준비 - 보안 수정] 로컬 테스트 편의를 위해 실제 구글 로그인 없이도
-    # 아무 정보나 보내면 계정이 만들어지던 우회 로직을 되돌렸습니다. 실제
-    # 구글 OAuth를 통해 세션이 이미 만들어져 있어야만("/api/auth" 콜백에서
-    # request.session["user"]를 채워줌) 회원가입이 진행됩니다.
-    user_data = request.session.get("user")
-    if not user_data:
-        response.status_code = 401
-        return {"error": "Unauthorized"}
+    # [로컬 테스트용 임시 우회]
+    if not request.session.get("user"):
+        if partial_user.role == UserRole.PROFESSOR:
+            fake_sub = f"test_google_sub_prof_{partial_user.username}"
+            fake_email = f"test_prof_{partial_user.username}@example.com"
+        else:
+            fake_sub = f"test_google_sub_{partial_user.student_no}_{partial_user.username}"
+            fake_email = f"test_{partial_user.student_no}@example.com"
+        request.session["user"] = {"sub": fake_sub, "email": fake_email}
+
+    user_data = request.session["user"]
 
     with Session(engine) as session:
+        # 🟢 1. 이미 존재하는 유저면 에러 뱉지 말고 바로 유저 객체를 리턴 (로그인 처리)
         existing_user = session.get(User, user_data["sub"])
         if existing_user:
-            response.status_code = 400
-            return {"error": "User already exists"}
+            return existing_user
 
-        # [신규] 이메일 중복 확인 (구글 계정 기준이라 사실상 항상 유니크하지만 방어적으로 확인)
+        # 🟢 2. 이메일이 이미 존재해도 기존 유저 리턴
         existing_email = session.exec(
             select(User).where(User.email == user_data["email"])
         ).first()
         if existing_email:
-            response.status_code = 400
-            return {"error": "Email already exists"}
+            return existing_email
 
         if partial_user.role == UserRole.PROFESSOR:
             user = User(
@@ -65,14 +136,14 @@ async def create_user(partial_user: PartialUser, request: Request, response: Res
                 office=partial_user.office,
             )
         else:
-            # [신규] 학번 중복 확인
+            # 🟢 3. 학번이 이미 존재해도 그 기존 유저를 리턴 (로그인 처리)
             if partial_user.student_no is not None:
                 existing_student_no = session.exec(
                     select(User).where(User.student_no == partial_user.student_no)
                 ).first()
                 if existing_student_no:
-                    response.status_code = 400
-                    return {"error": "Student number already exists"}
+                    return existing_student_no
+
             user = User(
                 user_id=user_data["sub"],
                 username=partial_user.username,
@@ -87,7 +158,6 @@ async def create_user(partial_user: PartialUser, request: Request, response: Res
         session.commit()
         session.refresh(user)
         return user
-
 
 @router.patch("/me")
 async def update_current_user(
@@ -149,19 +219,6 @@ async def get_current_user(request: Request, response: Response):
             response.status_code = 404
             return {"error": "User not found"}
         return user
-# @router.get("/me")
-# async def get_current_user(request: Request, response: Response):
-#     user_data = request.session.get("user")
-#     if not user_data:
-#         response.status_code = 401
-#         return {"error": "Unauthorized"}
-
-#     with Session(engine) as session:
-#         user = session.get(User, user_data["sub"])
-#         if not user:
-#             response.status_code = 404
-#             return {"error": "User not found"}
-#         return user
 
 # 남들에게 공개되는 개인정보를 제한
 @router.get("/{user_id}")

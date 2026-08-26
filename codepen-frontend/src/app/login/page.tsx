@@ -175,6 +175,15 @@ function AuthPageContent() {
                 </span>
               </div>
             </a>
+
+            {/* [로컬 테스트용 - 배포 전 삭제] 구글 로그인 없이 바로 회원가입 폼(2단계)으로 이동 */}
+            <button
+              type="button"
+              onClick={() => router.push('/login?step=2')}
+              className="text-xs text-white/50 hover:text-white transition-colors mt-4 underline underline-offset-4"
+            >
+              (테스트용: 회원정보 입력으로 이동)
+            </button>
           </CardContent>
         </Card>
       </div>

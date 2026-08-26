@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 from models.submission import Submission, SubmissionStatus
 from models.problem import Problem
-from utils.codepen import download_codepen, close_codepen_pen, opened_codepens
+# from utils.codepen import download_codepen, close_codepen_pen, opened_codepens
+from utils.codepen import download_codepen
 
 from db import engine
 

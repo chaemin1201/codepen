@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 class QuestionAttempt(SQLModel, table=True):
     __table_args__ = (
-        # 학생 한 명당 문제 하나에 시도 기록은 하나만 존재 (누적 카운트로 관리)
         UniqueConstraint("question_id", "user_id", name="uq_question_attempt_user"),
     )
 
@@ -20,8 +19,13 @@ class QuestionAttempt(SQLModel, table=True):
     question_id: int = Field(foreign_key="question.question_id", nullable=False)
     user_id: str = Field(foreign_key="user.user_id", nullable=False)
     attempts_count: int = Field(default=0, nullable=False)
-    # None = 아직 채점 안 됨(미채점), True/False = 교수님이 수동으로 표시한 결과.
-    # 나중에 자동 채점을 붙이면 채점 엔진이 이 값을 직접 채우게 됩니다.
+    
+    codepen_url: str | None = Field(default=None, nullable=True)
+
+    # 🟢 필드명을 명확하게 professor_score로 변경하여 문제 배점(question.score)과 충돌 방지
+    professor_score: float | None = Field(default=None, nullable=True)
+    reason: str | None = Field(default=None, nullable=True)
+
     is_correct: bool | None = Field(default=None, nullable=True)
 
     updated_at: datetime | None = Field(

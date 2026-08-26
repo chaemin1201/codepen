@@ -15,6 +15,8 @@ from utils.codepen import close_codepen_pen
 from utils.user import login_required
 import secrets 
 from pathlib import Path
+from sqlmodel import delete
+from models.question import Question
 
 
 class PartialGroup(BaseModel):
@@ -89,6 +91,12 @@ def get_group_response(group: Group, session: Session, user_id: str) -> GroupRes
             )
         )
     ).all()
+    for problem in problems:
+        actual_count = session.exec(
+            select(Question).where(Question.problem_id == problem.problem_id)
+        ).all()
+        problem.question_count = len(actual_count)
+
     problems = [
         create_problem_response(problem, is_owner=owner.user_id == user_id)
         for problem in problems
@@ -230,25 +238,41 @@ async def delete_group(
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
 
-        for invite in group.invite_queues:
-            session.delete(invite)
-
-        for member in group.members:
-            session.delete(member)
-
+        # 1. 파일 및 코펜 정리 (제출물)
         for problem in group.problems:
             for submission in problem.submissions:
-                await close_codepen_pen(submission.codepen_url)
-                if os.path.exists(f"submissions/{submission.filename}"):
-                    shutil.rmtree(f"submissions/{submission.filename}")
-                session.delete(submission)
-            session.delete(problem)
+                try:
+                    if submission.codepen_url:
+                        await close_codepen_pen(submission.codepen_url)
+                except Exception:
+                    pass
 
+                try:
+                    if submission.filename:
+                        path_str = f"submissions/{submission.filename}"
+                        if os.path.exists(path_str):
+                            if os.path.isdir(path_str):
+                                shutil.rmtree(path_str)
+                            else:
+                                os.remove(path_str)
+                except Exception:
+                    pass
+
+        # 2. 데이터베이스 연관 데이터 직접 삭제 (SQL 쿼리 방식)
+        session.exec(delete(InviteQueue).where(InviteQueue.group_id == group_id))
+        session.exec(delete(GroupMember).where(GroupMember.group_id == group_id))
+        
+        # 문제 및 제출물도 직접 깔끔하게 삭제
+        problem_ids = [p.problem_id for p in group.problems]
+        if problem_ids:
+            session.exec(delete(Submission).where(Submission.problem_id.in_(problem_ids)))
+            session.exec(delete(Problem).where(Problem.group_id == group_id))
+
+        # 3. 그룹 삭제
         session.delete(group)
         session.commit()
         return {"message": "Group deleted successfully"}
-
-
+        
 @router.put("/{group_id}/members/{user_id}")
 async def add_member_to_group(
     group_id: int,

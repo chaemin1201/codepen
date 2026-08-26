@@ -15,6 +15,8 @@ export interface Question {
   problem_id: number
   title: string
   description: string | null
+  condition?: string | null     // 🟢 [신규 추가] 조건 필드
+  conditions?: string | null    // 🟢 [신규 추가] 백엔드 응답 호환용 조건 필드
   example_output: string | null
   score: number
   order: number
@@ -22,6 +24,7 @@ export interface Question {
   created_at: string
   stats: QuestionAttemptStats
   my_attempt: MyQuestionAttempt
+  attachment_name?: string | null
 }
 
 export interface QuestionAttemptRow {
