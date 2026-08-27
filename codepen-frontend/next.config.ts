@@ -1,18 +1,21 @@
 import type { NextConfig } from "next";
+import path from "path";
+
+const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  turbopack: {
+    root: path.join(__dirname),
+  },
   async rewrites() {
     return [
-      // 1. API 요청 프록시
       {
         source: "/api/:path*",
-        destination: "http://127.0.0.1:8000/api/:path*",
+        destination: `${BACKEND_URL}/api/:path*`,
       },
-      // 🟢 2. 업로드된 이미지 및 정적 파일 접근 프록시 (추가)
       {
         source: "/uploads/:path*",
-        destination: "http://127.0.0.1:8000/uploads/:path*",
+        destination: `${BACKEND_URL}/uploads/:path*`,
       },
     ];
   },
