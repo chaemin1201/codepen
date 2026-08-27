@@ -38,8 +38,7 @@ export type CreateProblemDialogProps = {
 
 const formSchema = z.object({
   title: z.string().min(1, '문제 제목은 필수입니다.'),
-  description: z.string().min(1, '문제 설명은 필수입니다.'),
-  difficulty: z.string().min(1, '문제 난이도는 필수입니다.'),
+  description: z.string().min(0, '문제 설명은 필수입니다.'),
   starts_at: z.date(),
   deadline: z.date().min(new Date(), '마감 날짜는 현재 시간 이후여야 합니다.'),
   hide_before_start: z.boolean(),
@@ -66,7 +65,6 @@ export const CreateProblemDialog = ({ groupId, onCreated }: CreateProblemDialogP
     defaultValues: {
       title: '',
       description: '',
-      difficulty: '',
       starts_at: new Date(),
       deadline: new Date(),
       hide_before_start: false,
@@ -146,26 +144,6 @@ export const CreateProblemDialog = ({ groupId, onCreated }: CreateProblemDialogP
                     id='form-create-problem-description'
                     aria-invalid={fieldState.invalid}
                     placeholder='HTML의 table 태그를 사용하여 표를 만들어보세요.'
-                  />
-                  {fieldState.invalid && (
-                    <FieldError errors={[fieldState.error]} />
-                  )}
-                </Field>
-              )}
-            />
-            <Controller
-              name='difficulty'
-              control={form.control}
-              render={({ field, fieldState }) => (
-                <Field data-invalid={fieldState.invalid}>
-                  <FieldLabel htmlFor='form-create-problem-difficulty'>
-                    난이도
-                  </FieldLabel>
-                  <Input
-                    {...field}
-                    id='form-create-problem-difficulty'
-                    aria-invalid={fieldState.invalid}
-                    placeholder='쉬움'
                   />
                   {fieldState.invalid && (
                     <FieldError errors={[fieldState.error]} />

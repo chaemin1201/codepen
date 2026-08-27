@@ -17,7 +17,9 @@ import {
   PencilIcon,
   Trash2Icon,
   SaveIcon,
-  ArrowLeftIcon
+  ArrowLeftIcon,
+  ImageIcon,
+  UploadIcon,
 } from 'lucide-react'
 
 import { Header } from '@/components/header'
@@ -48,17 +50,42 @@ function EditQuestionForm({
   onSaved,
   onCancel,
 }: {
-  question: Question & { condition?: string; conditions?: string }
+  question: Question & { condition?: string; conditions?: string; example_image_url?: string }
   onSaved: () => Promise<void> | void
   onCancel: () => void
 }) {
   const [title, setTitle] = useState(question.title)
   const [description, setDescription] = useState(question.description ?? '')
-  // 🟢 condition 또는 conditions 교차 탐색하여 초기값 설정
   const [condition, setCondition] = useState(question.condition ?? question.conditions ?? '')
   const [exampleOutput, setExampleOutput] = useState(question.example_output ?? '')
+  const [exampleImageUrl, setExampleImageUrl] = useState(question.example_image_url ?? '')
   const [score, setScore] = useState(String(question.score))
   const [saving, setSaving] = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
+
+  // 📸 이미지 업로드 핸들러
+  const handleImageUpload = async (file: File) => {
+    setUploadingImage(true)
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const res = await fetch(`/api/question/upload-image`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!res.ok) throw new Error('Image upload failed')
+      const data = await res.json()
+      setExampleImageUrl(data.image_url || data.url)
+      toast.success('결과 예시 이미지가 등록되었습니다.')
+    } catch (err) {
+      console.error('Image upload error:', err)
+      toast.error('이미지 업로드에 실패했습니다.')
+    } finally {
+      setUploadingImage(false)
+    }
+  }
 
   const onSave = async () => {
     setSaving(true)
@@ -70,16 +97,17 @@ function EditQuestionForm({
           problem_id: question.problem_id,
           title,
           description,
-          condition, // 백엔드로 condition 전송
-          conditions: condition, // 백엔드 호환용 conditions 동시 전송
+          condition,
+          conditions: condition,
           example_output: exampleOutput,
+          example_image_url: exampleImageUrl, // 🟢 이미지 URL 전달
           score: Number(score) || 0,
           order: question.order,
           is_visible: question.is_visible,
         }),
       })
       toast.success('문제가 성공적으로 저장되었습니다.')
-      await onSaved() // 🟢 데이터 최신화 완료 대기
+      await onSaved()
     } catch (err) {
       console.error('Question update error:', err)
       toast.error('저장에 실패했습니다. 다시 시도해 주세요.')
@@ -95,8 +123,7 @@ function EditQuestionForm({
         <Label className="text-xs font-bold">문제 이름</Label>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
-      
-      {/* 🟢 설명 및 조건 분리 입력창 */}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <Label className="text-xs font-bold font-mono">문제 설명</Label>
@@ -128,6 +155,62 @@ function EditQuestionForm({
           onChange={(e) => setExampleOutput(e.target.value)}
         />
       </div>
+
+      {/* 🟢 결과 예시 이미지 업로드 섹션 */}
+      <div className="space-y-1.5">
+        <Label className="text-xs font-bold flex items-center gap-1.5">
+          <ImageIcon className="size-3.5 text-indigo-600" /> 결과 예시 이미지
+        </Label>
+
+        {exampleImageUrl ? (
+          <div className="relative border border-slate-200 rounded-lg p-2 bg-slate-50 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img
+                src={exampleImageUrl}
+                alt="결과 예시 미리보기"
+                className="h-14 w-14 object-cover rounded-md border border-slate-200 bg-white"
+              />
+              <span className="text-xs text-slate-600 truncate max-w-[200px]">
+                {exampleImageUrl}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setExampleImageUrl('')}
+              className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 h-8 px-2"
+            >
+              <Trash2Icon className="size-4" />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 transition-colors">
+              {uploadingImage ? (
+                <LoaderCircleIcon className="animate-spin size-4 text-indigo-600" />
+              ) : (
+                <UploadIcon className="size-4 text-indigo-600" />
+              )}
+              이미지 첨부하기
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={uploadingImage}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) handleImageUpload(file)
+                }}
+              />
+            </label>
+            <span className="text-[11px] text-slate-400">
+              결과 화면 스크린샷 등의 이미지를 등록할 수 있습니다.
+            </span>
+          </div>
+        )}
+      </div>
+
       <div className="space-y-1.5">
         <Label className="text-xs font-bold">배점</Label>
         <Input
@@ -141,7 +224,7 @@ function EditQuestionForm({
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
           취소
         </Button>
-        <Button size="sm" onClick={onSave} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
+        <Button size="sm" onClick={onSave} disabled={saving || uploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
           {saving ? <LoaderCircleIcon className="animate-spin size-3.5" /> : <SaveIcon className="size-3.5" />}
           저장
         </Button>
@@ -294,8 +377,6 @@ function QuestionDetailPageContent() {
     : problem?.title ?? ''
 
   const embedUrl = getCodePenEmbedUrl(activeCodePenUrl)
-
-  // 🟢 condition 또는 conditions 키값을 모두 확인하여 바인딩
   const currentConditionText = question.condition || question.conditions || '특별한 조건이 지정되지 않았습니다.'
 
   return (
@@ -349,7 +430,6 @@ function QuestionDetailPageContent() {
           <EditQuestionForm
             question={question}
             onSaved={async () => {
-              // 🟢 저장 성공 후 SWR 강제 최신화
               await mutate(undefined, { revalidate: true })
               setIsEditing(false)
             }}
@@ -360,7 +440,6 @@ function QuestionDetailPageContent() {
           <div className="bg-white border border-slate-100 rounded-xl p-6 shadow-2xs space-y-6">
             <h1 className="text-2xl font-bold text-slate-900">{question.title}</h1>
 
-            {/* 🟢 설명과 조건 분리 표시 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 space-y-2">
                 <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">문제 설명</h4>
@@ -376,15 +455,39 @@ function QuestionDetailPageContent() {
               </div>
             </div>
 
-            {/* 텍스트 형태 결과 예시 */}
-            {question.example_output && (
-              <div className="space-y-1.5">
-                <h3 className="text-xs font-bold text-slate-500">입출력 / 결과 예시</h3>
-                <pre className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800 overflow-x-auto whitespace-pre-wrap">
-                  {question.example_output}
-                </pre>
-              </div>
-            )}
+            {/* 🟢 텍스트 + 이미지가 합쳐진 단일 결과 예시 블록 */}
+{(question.example_output || question.example_image_url) && (
+  <div className="space-y-1.5">
+    <h3 className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+      <ImageIcon className="size-3.5 text-indigo-600" /> 결과 예시
+    </h3>
+
+    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+      {/* 1. 텍스트 예시 */}
+      {question.example_output && (
+        <pre className="text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed">
+          {question.example_output}
+        </pre>
+      )}
+
+      {/* 2. 경계선 (텍스트와 이미지가 모두 있을 때 노출) */}
+      {question.example_output && question.example_image_url && (
+        <div className="border-t border-slate-200 my-2" />
+      )}
+
+      {/* 3. 이미지 예시 */}
+      {question.example_image_url && (
+        <div>
+          <img
+            src={question.example_image_url}
+            alt="결과 예시 이미지"
+            className="max-h-96 w-auto object-contain rounded-lg border border-slate-200 bg-white"
+          />
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
             {/* 첨부파일 영역 */}
             <div className="space-y-1.5">

@@ -21,6 +21,7 @@ class Question(SQLModel, table=True):
 
     # [신규] 문제 등록 시 보여주는 "제출 예시" (텍스트).
     example_output: str | None = Field(default=None, nullable=True)
+    example_image_url: str | None = Field(default=None, nullable=True)
     score: int = Field(default=10, nullable=False)
     order: int = Field(default=0, nullable=False)
     is_visible: bool = Field(default=True, nullable=False)

@@ -35,15 +35,15 @@ def _parse_dt_aware(value: str) -> datetime:
 
 
 class PartialProblem(BaseModel):
-    group_id: int
+    group_id: int | None = None
     category_id: int | None = None
     question_count: int = 1
-    title: str
-    description: str
-    difficulty: str
-    starts_at: str
-    deadline: str
-    hide_before_start: bool
+    title: str | None = None
+    description: str | None = ""  # 🟢 입력하지 않아도 422 에러 없이 통과
+    difficulty: str | None = "easy"
+    starts_at: str | None = None
+    deadline: str | None = None
+    hide_before_start: bool = False
 
 
 router = APIRouter(prefix="/problem")
@@ -117,40 +117,58 @@ async def update_problem(
         if group.owner_id != current_user.user_id:
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
-        # [신규] category_id를 바꾸는 경우 같은 그룹 소속인지 확인
+
         if problem.category_id is not None:
             category = session.get(Category, problem.category_id)
             if not category or category.group_id != existing_problem.group_id:
                 response.status_code = 400
                 return {"error": "Invalid category for this group"}
 
-        try:
-            parsed_starts_at = _parse_dt_aware(problem.starts_at)
-            new_deadline = _parse_dt_aware(problem.deadline)
-        except ValueError:
-            response.status_code = 400
-            return {"error": "Invalid datetime format. Use ISO 8601 format."}
-        existing_problem.category_id = problem.category_id
-        existing_problem.question_count = problem.question_count
-        existing_problem.title = problem.title
-        existing_problem.description = problem.description
-        existing_problem.difficulty = problem.difficulty
-        existing_problem.starts_at = parsed_starts_at
-        existing_problem.hide_before_start = problem.hide_before_start
-        if existing_problem.deadline and new_deadline > existing_problem.deadline.replace(tzinfo=timezone.utc):
-            for submission in existing_problem.submissions:
-                await open_codepen_pen(submission.codepen_url)
-        existing_problem.deadline = new_deadline
+        # 🟢 전달받은 날짜가 있을 때만 파싱 및 적용
+        if problem.starts_at:
+            try:
+                existing_problem.starts_at = _parse_dt_aware(problem.starts_at)
+            except ValueError:
+                response.status_code = 400
+                return {"error": "Invalid starts_at datetime format."}
+
+        if problem.deadline:
+            try:
+                new_deadline = _parse_dt_aware(problem.deadline)
+                if existing_problem.deadline and new_deadline > existing_problem.deadline.replace(tzinfo=timezone.utc):
+                    for submission in existing_problem.submissions:
+                        await open_codepen_pen(submission.codepen_url)
+                existing_problem.deadline = new_deadline
+            except ValueError:
+                response.status_code = 400
+                return {"error": "Invalid deadline datetime format."}
+
+        # 🟢 전달된 값이 있을 경우에만 필드 업데이트
+        if problem.title is not None:
+            existing_problem.title = problem.title
+        if problem.description is not None:
+            existing_problem.description = problem.description
+        if problem.difficulty is not None:
+            existing_problem.difficulty = problem.difficulty
+        if problem.hide_before_start is not None:
+            existing_problem.hide_before_start = problem.hide_before_start
+        if problem.question_count is not None:
+            existing_problem.question_count = problem.question_count
+        if problem.category_id is not None:
+            existing_problem.category_id = problem.category_id
+
         session.add(existing_problem)
         session.commit()
         session.refresh(existing_problem)
-        reschedule_problem_deadline(
-            existing_problem.problem_id, existing_problem.deadline
-        )
+
+        if problem.deadline:
+            reschedule_problem_deadline(
+                existing_problem.problem_id, existing_problem.deadline
+            )
+
         return create_problem_response(
             existing_problem, group.owner_id == current_user.user_id
         )
-
 
 @router.get("/{problem_id}")
 async def get_problem(

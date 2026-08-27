@@ -210,7 +210,7 @@
 from fastapi import FastAPI, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.staticfiles import StaticFiles  # 🟢 StaticFiles import
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 from starlette.config import Config
@@ -218,6 +218,7 @@ from contextlib import asynccontextmanager
 from sqlmodel import Session, select
 from datetime import datetime, timezone
 import asyncio
+import os  # 🟢 os import
 
 from routes.user import router as user_router
 from routes.group import router as group_router
@@ -254,11 +255,13 @@ ORIGINS = (
     ]
 )
 
-# ❌ 무겁고 에러를 유발하던 _codepen_startup_tasks 관련 코드 전체 삭제 완료
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 마감일 처리 등을 위한 기본 스케줄러 시작 (Playwright 인증 갱신 작업 삭제)
+    # 🟢 이미지 업로드 폴더가 없으면 자동 생성
+    os.makedirs("uploads/question_images", exist_ok=True)
+    os.makedirs("uploads/questions", exist_ok=True)
+    
+    # 마감일 처리 등을 위한 기본 스케줄러 시작
     start_scheduler()
     
     yield
@@ -269,10 +272,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# 제출 파일 정적 경로 마운트
 app.mount(
     "/api/submission_files/",
     StaticFiles(directory="submissions"),
     name="submission_files",
+)
+
+# 🟢 [추가] 업로드된 이미지 및 첨부파일 접근용 정적 경로 마운트
+os.makedirs("uploads", exist_ok=True)
+app.mount(
+    "/uploads",
+    StaticFiles(directory="uploads"),
+    name="uploads",
 )
 
 app.add_middleware(SessionMiddleware, secret_key=config("SESSION_SECRET"))

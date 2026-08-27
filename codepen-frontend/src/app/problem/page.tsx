@@ -708,19 +708,6 @@ function IntegratedGroupPageContent() {
               </select>
             </div>
             <div className='space-y-2'>
-              <Label htmlFor='prob-difficulty'>난이도</Label>
-              <select
-                id='prob-difficulty'
-                className='w-full border rounded-md p-2 text-sm bg-background'
-                value={newProblemDifficulty}
-                onChange={(e) => setNewProblemDifficulty(e.target.value)}
-              >
-                <option value='easy'>쉬움</option>
-                <option value='medium'>보통</option>
-                <option value='hard'>어려움</option>
-              </select>
-            </div>
-            <div className='space-y-2'>
               <Label>게시 시작 시간</Label>
               <div className='flex gap-1.5'>
                 <Input

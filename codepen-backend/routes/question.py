@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
+import os
+import shutil
+from pathlib import Path
 from fastapi import APIRouter, Response, Depends, UploadFile, File
 from sqlmodel import Session, select
 from pydantic import BaseModel
 from db import engine
-import os
-import shutil
-from pathlib import Path
 from models.user import User
 from models.group import Group
 from models.problem import Problem
@@ -17,7 +17,7 @@ from utils.user import login_required
 router = APIRouter(prefix="/question")
 
 
-# 🟢 condition 필드 추가 (프론트엔드 호환성을 위해 conditions도 함께 수신)
+# 🟢 example_image_url 및 condition/conditions 필드 추가
 class PartialQuestion(BaseModel):
     problem_id: int | None = None
     title: str | None = None
@@ -25,6 +25,7 @@ class PartialQuestion(BaseModel):
     condition: str | None = None
     conditions: str | None = None
     example_output: str | None = None
+    example_image_url: str | None = None  # 🟢 이미지 URL 수신 필드
     score: int | None = None
     order: int | None = None
     is_visible: bool | None = None
@@ -43,7 +44,7 @@ class MyAttempt(BaseModel):
     last_submitted_at: datetime | None = None
 
 
-# 🟢 QuestionResponse 스키마에 condition 및 conditions 추가
+# 🟢 QuestionResponse 스키마에 example_image_url 추가
 class QuestionResponse(BaseModel):
     question_id: int
     problem_id: int
@@ -52,6 +53,7 @@ class QuestionResponse(BaseModel):
     condition: str | None = None
     conditions: str | None = None
     example_output: str | None = None
+    example_image_url: str | None = None  # 🟢 이미지 URL 응답 필드
     score: int
     order: int
     is_visible: bool
@@ -97,8 +99,8 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
             if sub and sub.submitted_at:
                 last_submitted_at = sub.submitted_at
 
-    # 🟢 DB 모델의 condition/conditions 값 호환 파싱
     cond_val = getattr(question, "condition", getattr(question, "conditions", None))
+    img_url_val = getattr(question, "example_image_url", None)
 
     return QuestionResponse(
         question_id=question.question_id,
@@ -108,6 +110,7 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
         condition=cond_val,
         conditions=cond_val,
         example_output=question.example_output,
+        example_image_url=img_url_val,
         score=question.score,
         order=question.order,
         is_visible=question.is_visible,
@@ -125,6 +128,27 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
         ),
         attachment_name=getattr(question, "attachment_name", None),
     )
+
+
+# 🟢 [신규] 소문제 독립 이미지 업로드 API (/api/question/upload-image)
+@router.post("/upload-image")
+async def upload_question_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(login_required),
+):
+    upload_dir = Path("uploads/question_images")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    safe_filename = os.path.basename(file.filename or "image.png")
+    file_path = upload_dir / f"{timestamp}_{safe_filename}"
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # 접근 가능한 상대 경로 반환
+    image_url = f"/uploads/question_images/{timestamp}_{safe_filename}"
+    return {"image_url": image_url, "url": image_url}
 
 
 @router.get("/{question_id}")
@@ -175,7 +199,7 @@ async def get_questions_by_problem(
         return [_build_response(q, current_user.user_id) for q in questions]
 
 
-# 🟢 소문제 생성 시 condition 값 저장
+# 🟢 소문제 생성 시 example_image_url 및 condition 수신 및 저장
 @router.post("")
 async def create_question(
     question: PartialQuestion,
@@ -208,11 +232,12 @@ async def create_question(
             is_visible=question.is_visible if question.is_visible is not None else True,
         )
 
-        # SQLModel / DB 모델 속성에 condition이 있을 경우 저장
         if hasattr(new_question, "condition"):
             setattr(new_question, "condition", target_condition)
         if hasattr(new_question, "conditions"):
             setattr(new_question, "conditions", target_condition)
+        if hasattr(new_question, "example_image_url") and question.example_image_url:
+            setattr(new_question, "example_image_url", question.example_image_url)
 
         session.add(new_question)
         session.commit()
@@ -220,7 +245,7 @@ async def create_question(
         return _build_response(new_question, current_user.user_id)
 
 
-# 🟢 소문제 수정 시 condition 값 업데이트
+# 🟢 소문제 수정 시 example_image_url 및 condition 반영
 @router.patch("/{question_id}")
 async def update_question(
     question_id: int,
@@ -243,8 +268,7 @@ async def update_question(
             existing.title = question.title
         if question.description is not None:
             existing.description = question.description
-        
-        # 🟢 condition / conditions 파라미터 갱신
+
         target_condition = question.condition if question.condition is not None else question.conditions
         if target_condition is not None:
             if hasattr(existing, "condition"):
@@ -254,6 +278,8 @@ async def update_question(
 
         if question.example_output is not None:
             existing.example_output = question.example_output
+        if question.example_image_url is not None and hasattr(existing, "example_image_url"):
+            setattr(existing, "example_image_url", question.example_image_url)
         if question.score is not None:
             existing.score = question.score
         if question.order is not None:
@@ -287,10 +313,10 @@ async def upload_question_file(
 
         upload_dir = Path("uploads/questions")
         upload_dir.mkdir(parents=True, exist_ok=True)
-        
+
         safe_filename = os.path.basename(file.filename or "file")
         file_path = upload_dir / f"{question_id}_{safe_filename}"
-        
+
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
@@ -313,7 +339,7 @@ async def delete_question_file(
         if not question:
             response.status_code = 404
             return {"error": "Question not found"}
-            
+
         problem = session.get(Problem, question.problem_id)
         group = session.get(Group, problem.group_id) if problem else None
         if not group or group.owner_id != current_user.user_id:
@@ -418,7 +444,6 @@ async def get_question_attempt_by_user(
         problem = session.get(Problem, question.problem_id)
         group = session.get(Group, problem.group_id) if problem else None
 
-        # 🟢 채점 화면 전용: 교수(그룹 owner)만 조회 가능
         if not group or group.owner_id != current_user.user_id:
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
@@ -467,7 +492,7 @@ async def get_question_attempts(
         all_attempts = session.exec(
             select(QuestionAttempt).where(QuestionAttempt.question_id == question_id)
         ).all()
-        
+
         all_submissions = session.exec(
             select(Submission).where(Submission.problem_id == question.problem_id)
         ).all()
@@ -479,7 +504,7 @@ async def get_question_attempts(
 
         for member in group.members:
             m_user_id = str(getattr(member, "user_id", getattr(member, "id", "")))
-            
+
             if m_user_id == str(group.owner_id):
                 continue
 
@@ -502,18 +527,18 @@ async def get_question_attempts(
                 attempts_count = 1
 
             result.append({
-    "question_id": question_id,
-    "user_id": m_user_id,
-    "username": m_username,
-    "student_no": m_student_no,
-    "attempts_count": attempts_count,
-    "is_correct": attempt.is_correct if attempt else None,
-    "last_submitted_at": last_submitted_at,
-    "professor_score": getattr(attempt, "professor_score", None) if attempt else None,
-    "score": getattr(attempt, "professor_score", None) if attempt else None,
-    "codepen_url": getattr(attempt, "codepen_url", None) if attempt else None,
-    "reason": getattr(attempt, "reason", None) if attempt else None,
-})
+                "question_id": question_id,
+                "user_id": m_user_id,
+                "username": m_username,
+                "student_no": m_student_no,
+                "attempts_count": attempts_count,
+                "is_correct": attempt.is_correct if attempt else None,
+                "last_submitted_at": last_submitted_at,
+                "professor_score": getattr(attempt, "professor_score", None) if attempt else None,
+                "score": getattr(attempt, "professor_score", None) if attempt else None,
+                "codepen_url": getattr(attempt, "codepen_url", None) if attempt else None,
+                "reason": getattr(attempt, "reason", None) if attempt else None,
+            })
 
         return result
 
@@ -605,13 +630,12 @@ async def submit_question(
             "codepen_url": body.codepen_url,
         }
 
-# 🟢 점수 저장 요청 바디 스키마
+
 class SaveScoreBody(BaseModel):
     score: float
     reason: str | None = None
 
 
-# 🟢 소문제 시도(Attempt) 개별 점수 및 피드백 저장 API
 @router.post("/{question_id}/attempt/{user_id}/score")
 async def save_attempt_score(
     question_id: int,
@@ -633,7 +657,6 @@ async def save_attempt_score(
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
 
-        # 해당 학생의 시도(QuestionAttempt) 기록 조회
         attempt = session.exec(
             select(QuestionAttempt).where(
                 QuestionAttempt.question_id == question_id,
@@ -642,19 +665,17 @@ async def save_attempt_score(
         ).first()
 
         if not attempt:
-            # 시도 기록이 없으면 새 객체 생성
             attempt = QuestionAttempt(
                 question_id=question_id,
                 user_id=user_id,
                 attempts_count=1,
             )
 
-        # 🟢 professor_score와 score 컬럼 모두에 교수님이 입력한 점수 반영
         if hasattr(attempt, "professor_score"):
             setattr(attempt, "professor_score", body.score)
         if hasattr(attempt, "score"):
             setattr(attempt, "score", body.score)
-            
+
         if hasattr(attempt, "reason"):
             setattr(attempt, "reason", body.reason)
         if hasattr(attempt, "feedback"):
