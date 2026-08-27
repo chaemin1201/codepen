@@ -10,3 +10,4 @@ python-dotenv==1.2.1
 PyYAML==6.0.3
 sqlmodel==0.0.31
 itsdangerous==2.2.0
+supabase
