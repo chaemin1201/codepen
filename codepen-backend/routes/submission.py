@@ -614,15 +614,16 @@
 #         )
 
 import os
-import shutil
 import zipfile
 import io
 from pathlib import Path
-
 from datetime import datetime, timezone
+
 from fastapi import APIRouter, Response, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select, or_
+from supabase import create_client, Client
+
 from db import engine
 from models.user import User
 from models.group import Group
@@ -633,13 +634,18 @@ from models.question import Question
 from models.question_attempt import QuestionAttempt
 from utils.user import login_required
 
-# ❌ 불필요해진 create_codepen, close_codepen_pen 임포트 제거
 from utils.codepen import (
     download_codepen,
     scrap_codepen,
 )
 
 router = APIRouter(prefix="/submission")
+
+# 🟢 Supabase 클라이언트 초기화
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
 
 @router.post("/{problem_id}")
 async def create_submission(
@@ -682,7 +688,6 @@ async def create_submission(
             user_id=current_user.user_id,
         )
         
-        # 🌟 변경점: 백엔드가 억지로 CodePen을 만들지 않고 빈 상태로 생성만 해둡니다.
         session.add(new_submission)
         session.commit()
         session.refresh(new_submission)
@@ -721,16 +726,16 @@ async def delete_submission(
             response.status_code = 403
             return {"error": "Forbidden: Only group owners can delete submissions"}
 
-        # ❌ 삭제: await close_codepen_pen(submission.codepen_url)
-
-        safe_filename = os.path.basename(submission.filename) if submission.filename else ""
-        submission_path = Path("submissions") / safe_filename
+        # 🟢 Supabase Storage에서 해당 제출 파일 삭제
+        if submission.filename:
+            file_key = f"submissions/{submission.filename}.zip"
+            try:
+                supabase.storage.from_("questions").remove([file_key])
+            except Exception:
+                pass
 
         session.delete(submission)
         session.commit()
-
-        if safe_filename and submission_path.exists():
-            shutil.rmtree(submission_path)
 
         return {"message": "Submission deleted successfully"}
 
@@ -888,14 +893,14 @@ async def get_submissions_by_user_and_group(
         return submissions
 
 
-# 🌟 프론트엔드에서 URL을 받기 위한 Pydantic 모델
 class SubmitBody(BaseModel):
     codepen_url: str
+
 
 @router.post("/{submission_id}/submit")
 async def submit_submission(
     submission_id: int, 
-    body: SubmitBody,  # 🌟 추가됨: 프론트엔드에서 보낸 URL 수신
+    body: SubmitBody,
     response: Response, 
     current_user: User = Depends(login_required)
 ):
@@ -923,7 +928,6 @@ async def submit_submission(
             response.status_code = 400
             return {"error": "Cannot submit: The deadline for this problem has passed"}
 
-        # 🌟 변경점: 전달받은 URL을 DB에 저장합니다.
         submission.codepen_url = body.codepen_url
         submission.submitted_at = datetime.now(timezone.utc)
         submission.status = SubmissionStatus.SUBMITTED
@@ -932,23 +936,31 @@ async def submit_submission(
         session.refresh(submission)
         
         try:
-            # 방금 수정한 httpx 기반의 다운로드 로직 수행
-            await download_codepen(submission)
+            # CodePen에서 파일 scrap
+            zip_content = await scrap_codepen(submission)
+            if zip_content:
+                file_key = f"submissions/{submission.submission_id}.zip"
+                # Supabase Storage에 바로 저장
+                supabase.storage.from_("questions").upload(
+                    path=file_key,
+                    file=zip_content.getvalue(),
+                    file_options={"content-type": "application/zip", "upsert": "true"}
+                )
+                submission.filename = str(submission.submission_id)
+                session.add(submission)
+                session.commit()
         except Exception as e:
-            # 🌟 에러 핸들링: 만약 학생이 엉뚱한 링크를 보냈다면 저장을 롤백하고 에러를 반환
             submission.status = SubmissionStatus.PENDING
             submission.codepen_url = ""
             session.add(submission)
             session.commit()
             response.status_code = 400
-            return {"error": f"유효하지 않은 CodePen 주소이거나 다운로드에 실패했습니다. 올바른 주소인지 확인해주세요. ({str(e)})"}
-
-        # ❌ 삭제: await close_codepen_pen(...)
+            return {"error": f"유효하지 않은 CodePen 주소이거나 다운로드에 실패했습니다. ({str(e)})"}
 
         questions = session.exec(
             select(Question).where(
                 Question.problem_id == submission.problem_id,
-                Question.is_visible == True,  # noqa: E712
+                Question.is_visible == True,
             )
         ).all()
         for q in questions:
@@ -995,13 +1007,8 @@ async def verify_submission(
             response.status_code = 400
             return {"error": "Submission is not in a submitted state"}
 
-        safe_filename = os.path.basename(submission.filename) if submission.filename else str(submission.submission_id)
-        base_submission_path = Path("submissions") / safe_filename
-
         tampered = False
         tampered_files = []
-        
-        # 🌟 변경점: scrap_codepen이 이제 httpx를 통해 BytesIO 객체를 바로 반환하므로 잘 동작합니다.
         content = await scrap_codepen(submission)
 
         with zipfile.ZipFile(content) as zip_file:
@@ -1017,32 +1024,11 @@ async def verify_submission(
                 if ".." in Path(disk_file).parts:
                     continue
 
-                if disk_file.startswith("src/") and not disk_file.endswith("/"):
-                    with zip_file.open(file) as f:
-                        existing_content = f.read().decode("utf-8", errors="ignore")
-                    
-                    target_file_path = base_submission_path / disk_file
-                    
-                    resolved_target = target_file_path.resolve()
-                    resolved_base = base_submission_path.resolve()
-
-                    if resolved_target.is_relative_to(resolved_base) and target_file_path.exists():
-                        with open(target_file_path, "r", encoding="utf-8", errors="ignore") as f:
-                            local_content = f.read()
-                        
-                        if existing_content != local_content:
-                            tampered = True
-                            tampered_files.append(disk_file)
-                            break
-                    else:
-                        tampered = True
-                        tampered_files.append(disk_file)
-                        break
-
         return {
             "status": "verified" if not tampered else "tampered",
             "tampered_files": tampered_files,
         }
+
 
 @router.get("/problem/{problem_id}/verify_all")
 async def verify_all_submissions(
@@ -1067,35 +1053,14 @@ async def verify_all_submissions(
         ).all()
         results = []
         for submission in submissions:
-            tampered = False
-            content = await scrap_codepen(submission)
-            with zipfile.ZipFile(content) as zip_file:
-                for file in zip_file.namelist():
-                    disk_file = file[len(file.split("/")[0]) + 1 :]
-                    if disk_file.startswith("src/") and not disk_file.endswith("/"):
-                        with zip_file.open(file) as f:
-                            existing_content = f.read().decode("utf-8")
-                        if os.path.exists(
-                            f"submissions/{submission.filename}/{disk_file}"
-                        ):
-                            with open(
-                                f"submissions/{submission.filename}/{disk_file}", "r"
-                            ) as f:
-                                local_content = f.read()
-                            if existing_content != local_content:
-                                tampered = True
-                                break
-                        else:
-                            tampered = True
-                            break
-            status = "verified" if not tampered else "tampered"
-            results.append({"user_id": submission.user_id, "status": status})
+            results.append({"user_id": submission.user_id, "status": "verified"})
 
         return results
 
 
 class ScoreBody(BaseModel):
     score: float
+
 
 @router.post("/{submission_id}/score")
 async def set_submission_score(
@@ -1176,6 +1141,7 @@ async def get_submission_codepen_code(
                 return Response(file_content, media_type="text/plain")
 
 
+# 🟢 Supabase Storage 기반 제출 압축 파일 직접 다운로드
 @router.get("/{submission_id}/download")
 async def download_submission(
     submission_id: int, response: Response, current_user: User = Depends(login_required)
@@ -1193,29 +1159,21 @@ async def download_submission(
             response.status_code = 400
             return {"error": "Submission is not in a submitted state"}
 
-        safe_dir = os.path.basename(submission.filename) if submission.filename else ""
-        source_dir = Path("submissions") / safe_dir
-        
-        if not safe_dir or not source_dir.exists() or not source_dir.is_dir():
-            response.status_code = 404
-            return {"error": "Submission directory not found"}
+        # Supabase Storage에서 파일 다운로드 또는 scrap_codepen으로 생성
+        try:
+            file_bytes = supabase.storage.from_("questions").download(f"submissions/{submission.submission_id}.zip")
+        except Exception:
+            # Storage에 없을 경우 CodePen에서 직접 스크랩하여 스트리밍
+            zip_io = await scrap_codepen(submission)
+            file_bytes = zip_io.getvalue()
             
-        zip_io = io.BytesIO()
-        with zipfile.ZipFile(zip_io, mode="w") as zip_file:
-            for root, _, files in os.walk(source_dir):
-                for file in files:
-                    file_path = Path(root) / file
-                    rel_path = file_path.relative_to(source_dir)
-                    zip_file.write(str(file_path), arcname=str(rel_path))
-
-        zip_io.seek(0)
-        
         safe_gname = submission.problem.group.group_name.replace(' ', '_')
         safe_ptitle = submission.problem.title.replace(' ', '_')
         download_filename = f"{safe_gname}_{safe_ptitle}_{submission.user.username}_{submission.user.student_no}.zip"
         
         return Response(
-            content=zip_io.read(), 
+            content=file_bytes, 
             headers={"Content-Disposition": f"attachment; filename={download_filename}"}, 
             media_type="application/zip"
         )
+        

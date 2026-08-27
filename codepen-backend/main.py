@@ -210,7 +210,6 @@
 from fastapi import FastAPI, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles  # 🟢 StaticFiles import
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 from starlette.config import Config
@@ -218,7 +217,10 @@ from contextlib import asynccontextmanager
 from sqlmodel import Session, select
 from datetime import datetime, timezone
 import asyncio
-import os  # 🟢 os import
+import os
+
+# 🟢 Supabase 클라이언트 라이브러리 추가
+from supabase import create_client, Client
 
 from routes.user import router as user_router
 from routes.group import router as group_router
@@ -241,6 +243,11 @@ from utils.scheduler import (
 
 config = Config(".env")
 
+# 🟢 Supabase 설정 및 클라이언트 전역 초기화
+SUPABASE_URL = config("SUPABASE_URL", default="")
+SUPABASE_KEY = config("SUPABASE_KEY", default="")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
 ORIGINS = (
     [
         "https://notiworld.co.kr",
@@ -257,35 +264,15 @@ ORIGINS = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 🟢 이미지 업로드 폴더가 없으면 자동 생성
-    os.makedirs("uploads/question_images", exist_ok=True)
-    os.makedirs("uploads/questions", exist_ok=True)
-    
-    # 마감일 처리 등을 위한 기본 스케줄러 시작
+    # Supabase Storage를 사용하므로 로컬 폴더 생성(os.makedirs)은 필요 없음
     start_scheduler()
-    
     yield
-    
-    # 서버 종료 시 스케줄러 안전 종료
     shutdown_scheduler()
-
 
 app = FastAPI(lifespan=lifespan)
 
-# 제출 파일 정적 경로 마운트
-app.mount(
-    "/api/submission_files/",
-    StaticFiles(directory="submissions"),
-    name="submission_files",
-)
-
-# 🟢 [추가] 업로드된 이미지 및 첨부파일 접근용 정적 경로 마운트
-os.makedirs("uploads", exist_ok=True)
-app.mount(
-    "/uploads",
-    StaticFiles(directory="uploads"),
-    name="uploads",
-)
+# 🔴 [기존 정적 파일 마운트 제거]
+# Supabase Storage의 Public URL을 사용하므로 app.mount("/uploads", ...)는 필요 없습니다.
 
 app.add_middleware(SessionMiddleware, secret_key=config("SESSION_SECRET"))
 app.add_middleware(
@@ -317,7 +304,6 @@ async def login(request: Request):
         request, redirect_uri, prompt="consent"
     )
 
-
 @api.get("/auth")
 async def auth(request: Request):
     token = await oauth.google.authorize_access_token(request)
@@ -336,13 +322,11 @@ async def logout(request: Request):
     request.session.pop("user", None)
     return JSONResponse(content={"message": "Logged out successfully"})
 
-
 api.include_router(user_router)
 api.include_router(group_router)
 api.include_router(problem_router)
 api.include_router(submission_router)
 api.include_router(category_router)
 api.include_router(question_router)
-
 
 app.include_router(api)

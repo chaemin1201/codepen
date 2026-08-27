@@ -1,10 +1,13 @@
-from datetime import datetime, timezone
 import os
-import shutil
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+
 from fastapi import APIRouter, Response, Depends, UploadFile, File
 from sqlmodel import Session, select
 from pydantic import BaseModel
+from supabase import create_client, Client
+
 from db import engine
 from models.user import User
 from models.group import Group
@@ -16,8 +19,12 @@ from utils.user import login_required
 
 router = APIRouter(prefix="/question")
 
+# 🟢 Supabase 클라이언트 초기화 (.env 설정 참조)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-# 🟢 example_image_url 및 condition/conditions 필드 추가
+
 class PartialQuestion(BaseModel):
     problem_id: int | None = None
     title: str | None = None
@@ -25,7 +32,7 @@ class PartialQuestion(BaseModel):
     condition: str | None = None
     conditions: str | None = None
     example_output: str | None = None
-    example_image_url: str | None = None  # 🟢 이미지 URL 수신 필드
+    example_image_url: str | None = None
     score: int | None = None
     order: int | None = None
     is_visible: bool | None = None
@@ -44,7 +51,6 @@ class MyAttempt(BaseModel):
     last_submitted_at: datetime | None = None
 
 
-# 🟢 QuestionResponse 스키마에 example_image_url 추가
 class QuestionResponse(BaseModel):
     question_id: int
     problem_id: int
@@ -53,7 +59,7 @@ class QuestionResponse(BaseModel):
     condition: str | None = None
     conditions: str | None = None
     example_output: str | None = None
-    example_image_url: str | None = None  # 🟢 이미지 URL 응답 필드
+    example_image_url: str | None = None
     score: int
     order: int
     is_visible: bool
@@ -130,24 +136,28 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
     )
 
 
-# 🟢 [신규] 소문제 독립 이미지 업로드 API (/api/question/upload-image)
+# 🟢 [수정] Supabase Storage 'questions' 버킷에 이미지 업로드
 @router.post("/upload-image")
 async def upload_question_image(
     file: UploadFile = File(...),
     current_user: User = Depends(login_required),
 ):
-    upload_dir = Path("uploads/question_images")
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     timestamp = int(datetime.now(timezone.utc).timestamp())
     safe_filename = os.path.basename(file.filename or "image.png")
-    file_path = upload_dir / f"{timestamp}_{safe_filename}"
+    file_key = f"images/{timestamp}_{safe_filename}"
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    file_bytes = await file.read()
 
-    # 접근 가능한 상대 경로 반환
-    image_url = f"/uploads/question_images/{timestamp}_{safe_filename}"
+    # Supabase Storage 업로드
+    supabase.storage.from_("questions").upload(
+        path=file_key,
+        file=file_bytes,
+        file_options={"content-type": file.content_type or "image/png"}
+    )
+
+    # 공개 URL 가져오기
+    image_url = supabase.storage.from_("questions").get_public_url(file_key)
+
     return {"image_url": image_url, "url": image_url}
 
 
@@ -199,7 +209,6 @@ async def get_questions_by_problem(
         return [_build_response(q, current_user.user_id) for q in questions]
 
 
-# 🟢 소문제 생성 시 example_image_url 및 condition 수신 및 저장
 @router.post("")
 async def create_question(
     question: PartialQuestion,
@@ -245,7 +254,6 @@ async def create_question(
         return _build_response(new_question, current_user.user_id)
 
 
-# 🟢 소문제 수정 시 example_image_url 및 condition 반영
 @router.patch("/{question_id}")
 async def update_question(
     question_id: int,
@@ -293,6 +301,7 @@ async def update_question(
         return _build_response(existing, current_user.user_id)
 
 
+# 🟢 [수정] Supabase Storage에 첨부파일 업로드
 @router.post("/{question_id}/file")
 async def upload_question_file(
     question_id: int,
@@ -311,14 +320,16 @@ async def upload_question_file(
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
 
-        upload_dir = Path("uploads/questions")
-        upload_dir.mkdir(parents=True, exist_ok=True)
-
         safe_filename = os.path.basename(file.filename or "file")
-        file_path = upload_dir / f"{question_id}_{safe_filename}"
+        file_key = f"attachments/{question_id}_{safe_filename}"
+        file_bytes = await file.read()
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # Supabase Storage 업로드
+        supabase.storage.from_("questions").upload(
+            path=file_key,
+            file=file_bytes,
+            file_options={"content-type": file.content_type or "application/octet-stream"}
+        )
 
         if hasattr(question, "attachment_name"):
             question.attachment_name = safe_filename
@@ -328,6 +339,7 @@ async def upload_question_file(
         return {"message": "File uploaded successfully", "filename": safe_filename}
 
 
+# 🟢 [수정] Supabase Storage에서 첨부파일 삭제
 @router.delete("/{question_id}/file")
 async def delete_question_file(
     question_id: int,
@@ -347,13 +359,11 @@ async def delete_question_file(
             return {"error": "Forbidden: You are not the owner of this group"}
 
         if question.attachment_name:
-            upload_dir = Path("uploads/questions")
-            file_path = upload_dir / f"{question_id}_{question.attachment_name}"
-            if file_path.exists():
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
+            file_key = f"attachments/{question_id}_{question.attachment_name}"
+            try:
+                supabase.storage.from_("questions").remove([file_key])
+            except Exception:
+                pass
 
             question.attachment_name = None
             session.add(question)
