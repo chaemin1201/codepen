@@ -137,19 +137,19 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
     )
 
 
-def make_safe_filename(filename: str) -> str:
-    """Storage 키로 안전하게 쓸 수 있도록 파일명을 정제한다.
-    한글, 공백, 특수문자를 제거하고 확장자는 보존한다."""
-    name = os.path.basename(filename or "file")
-    # 확장자 분리
-    stem, ext = os.path.splitext(name)
-    # 영문/숫자/-/_ 만 남기고 나머지는 언더스코어로 치환
-    stem = re.sub(r"[^a-zA-Z0-9\-_]", "_", stem)
-    # 연속된 언더스코어 정리 + 앞뒤 언더스코어 제거
-    stem = re.sub(r"_+", "_", stem).strip("_")
-    if not stem:
-        stem = uuid.uuid4().hex[:8]
-    return f"{stem}{ext}"
+    def make_safe_filename(filename: str) -> str:
+        """Storage 키로 안전하게 쓸 수 있도록 파일명을 정제한다.
+        한글, 공백, 특수문자를 제거하고 확장자는 보존한다."""
+        name = os.path.basename(filename or "file")
+        # 확장자 분리
+        stem, ext = os.path.splitext(name)
+        # 영문/숫자/-/_ 만 남기고 나머지는 언더스코어로 치환
+        stem = re.sub(r"[^a-zA-Z0-9\-_]", "_", stem)
+        # 연속된 언더스코어 정리 + 앞뒤 언더스코어 제거
+        stem = re.sub(r"_+", "_", stem).strip("_")
+        if not stem:
+            stem = uuid.uuid4().hex[:8]
+        return f"{stem}{ext}"
 
 
 # 🟢 [수정] Supabase Storage 'questions' 버킷에 이미지 업로드
@@ -159,8 +159,8 @@ async def upload_question_image(
     current_user: User = Depends(login_required),
 ):
     timestamp = int(datetime.now(timezone.utc).timestamp())
-safe_filename = make_safe_filename(file.filename or "image.png")
-file_key = f"images/{timestamp}_{safe_filename}"
+    safe_filename = make_safe_filename(file.filename or "image.png")
+    file_key = f"images/{timestamp}_{safe_filename}"
 
     file_bytes = await file.read()
 
@@ -337,8 +337,8 @@ async def upload_question_file(
             return {"error": "Forbidden: You are not the owner of this group"}
 
         safe_filename = make_safe_filename(file.filename or "file")
-file_key = f"attachments/{question_id}_{safe_filename}"
-file_bytes = await file.read()
+        file_key = f"attachments/{question_id}_{safe_filename}"
+        file_bytes = await file.read()
 
         # Supabase Storage 업로드
         supabase.storage.from_("questions").upload(
