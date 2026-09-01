@@ -52,45 +52,28 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-// --- 맞춘 확률 배지 ---
-const AccuracyBadge = ({ accuracy }: { accuracy: number | null }) => {
-  if (accuracy === null) {
-    return (
-      <div className="inline-flex flex-col items-center justify-center px-3 py-1 rounded-xl text-xs bg-slate-100/80 text-slate-500 border border-slate-200/60 w-[105px]">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-slate-400 font-bold">...</span>
-          <span className="text-[11px] font-medium">집계중</span>
-        </div>
-        <div className="w-full bg-slate-200 h-[3px] rounded-full mt-1" />
-      </div>
-    )
-  }
+// --- 제출 여부(횟수) 배지 ---
+const SubmissionBadge = ({ attemptsCount }: { attemptsCount: number }) => {
+  const isSubmitted = attemptsCount > 0
 
-  const isSuccess = accuracy >= 50
   return (
     <div
-      className={`inline-flex flex-col items-center justify-center px-3 py-1 rounded-xl text-xs border w-[105px] ${
-        isSuccess
-          ? 'bg-emerald-50/70 text-emerald-700 border-emerald-200/80'
-          : 'bg-rose-50/70 text-rose-700 border-rose-200/80'
+      className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs border min-w-[95px] ${
+        isSubmitted
+          ? 'bg-blue-50/70 text-blue-700 border-blue-200/80' // 제출 시 파란색
+          : 'bg-rose-50/70 text-rose-700 border-rose-200/80' // 미제출 시 빨간색
       }`}
     >
-      <div className="flex items-center gap-1.5">
-        <span
-          className={`size-3.5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ${
-            isSuccess ? 'bg-emerald-500' : 'bg-rose-500'
-          }`}
-        >
-          {isSuccess ? 'S' : 'D'}
-        </span>
-        <span className="text-[11px] font-bold">{Math.round(accuracy)}%</span>
-      </div>
-      <div className="w-full bg-slate-200 h-[3px] rounded-full mt-1 overflow-hidden">
-        <div
-          className={`h-full ${isSuccess ? 'bg-emerald-500' : 'bg-rose-500'}`}
-          style={{ width: `${accuracy}%` }}
-        />
-      </div>
+      <span
+        className={`h-4 min-w-[16px] px-1.5 rounded-full flex items-center justify-center text-[10px] text-white font-bold ${
+          isSubmitted ? 'bg-blue-500' : 'bg-rose-500'
+        }`}
+      >
+        {attemptsCount}
+      </span>
+      <span className="text-[11px] font-bold whitespace-nowrap">
+        {isSubmitted ? '회 제출' : '미제출'}
+      </span>
     </div>
   )
 }
@@ -120,39 +103,39 @@ function QuestionList({
   const [uploadingImage, setUploadingImage] = React.useState(false)
 
   // 📸 신규 문제 생성용 이미지 업로드 함수
-const handleNewImageUpload = async (file: File) => {
-  if (!file.type.startsWith('image/')) {
-    toast.error('이미지 파일만 업로드할 수 있습니다.')
-    return
-  }
-
-  setUploadingImage(true)
-  const formData = new FormData()
-  // 백엔드 upload_question_image(file: UploadFile = File(...)) 매핑 키인 'file'로 지정
-  formData.append('file', file)
-
-  try {
-    const res = await fetch('/api/question/upload-image', {
-      method: 'POST',
-      body: formData, // multipart/form-data 자동 전송
-    })
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}))
-      throw new Error(errData.detail || errData.error || `업로드 실패 (${res.status})`)
+  const handleNewImageUpload = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('이미지 파일만 업로드할 수 있습니다.')
+      return
     }
 
-    const data = await res.json()
-    // 백엔드에서 반환한 image_url 경로 설정
-    setNewExampleImageUrl(data.image_url || data.url)
-    toast.success('결과 예시 이미지가 등록되었습니다.')
-  } catch (err: any) {
-    console.error('Image upload error:', err)
-    toast.error(err.message || '이미지 업로드 중 오류가 발생했습니다.')
-  } finally {
-    setUploadingImage(false)
+    setUploadingImage(true)
+    const formData = new FormData()
+    // 백엔드 upload_question_image(file: UploadFile = File(...)) 매핑 키인 'file'로 지정
+    formData.append('file', file)
+
+    try {
+      const res = await fetch('/api/question/upload-image', {
+        method: 'POST',
+        body: formData, // multipart/form-data 자동 전송
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || errData.error || `업로드 실패 (${res.status})`)
+      }
+
+      const data = await res.json()
+      // 백엔드에서 반환한 image_url 경로 설정
+      setNewExampleImageUrl(data.image_url || data.url)
+      toast.success('결과 예시 이미지가 등록되었습니다.')
+    } catch (err: any) {
+      console.error('Image upload error:', err)
+      toast.error(err.message || '이미지 업로드 중 오류가 발생했습니다.')
+    } finally {
+      setUploadingImage(false)
+    }
   }
-}
 
   // 📸 신규 문제 생성 다이얼로그용 이미지 삭제
   const handleNewImageDelete = () => {
@@ -296,133 +279,133 @@ const handleNewImageUpload = async (file: File) => {
           <button id="add-question-trigger" className="hidden" />
         </DialogTrigger>
         <DialogContent className="sm:max-w-xl">
-  <DialogHeader>
-    <DialogTitle>새 문제 생성</DialogTitle>
-  </DialogHeader>
-  <div className="space-y-4 py-2 text-xs">
-    {/* 1. 문제 이름 */}
-    <div className="space-y-1.5">
-      <Label className="text-xs font-bold">문제 이름</Label>
-      <Input
-        value={newTitle}
-        onChange={(e) => setNewTitle(e.target.value)}
-        placeholder="예: 1번. 두 수의 합 구하기"
-      />
-    </div>
+          <DialogHeader>
+            <DialogTitle>새 문제 생성</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2 text-xs">
+            {/* 1. 문제 이름 */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold">문제 이름</Label>
+              <Input
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="예: 1번. 두 수의 합 구하기"
+              />
+            </div>
 
-    {/* 2. 문제 설명 & 조건 */}
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <div className="space-y-1.5">
-        <Label className="text-xs font-bold">문제 설명</Label>
-        <Textarea
-          rows={4}
-          value={newDescription}
-          onChange={(e) => setNewDescription(e.target.value)}
-          placeholder="문제 상세 내용을 작성하세요."
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs font-bold">조건</Label>
-        <Textarea
-          rows={4}
-          value={newCondition}
-          onChange={(e) => setNewCondition(e.target.value)}
-          placeholder="문제 풀이에 필요한 제약 조건 등을 작성하세요."
-        />
-      </div>
-    </div>
+            {/* 2. 문제 설명 & 조건 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">문제 설명</Label>
+                <Textarea
+                  rows={4}
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="문제 상세 내용을 작성하세요."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">조건</Label>
+                <Textarea
+                  rows={4}
+                  value={newCondition}
+                  onChange={(e) => setNewCondition(e.target.value)}
+                  placeholder="문제 풀이에 필요한 제약 조건 등을 작성하세요."
+                />
+              </div>
+            </div>
 
-    {/* 3. 결과 예시 (텍스트) */}
-    <div className="space-y-1.5">
-      <Label className="text-xs font-bold">결과 예시</Label>
-      <Textarea
-        rows={3}
-        value={newExample}
-        onChange={(e) => setNewExample(e.target.value)}
-        placeholder="입출력 예시를 작성하세요."
-      />
-    </div>
+            {/* 3. 결과 예시 (텍스트) */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold">결과 예시</Label>
+              <Textarea
+                rows={3}
+                value={newExample}
+                onChange={(e) => setNewExample(e.target.value)}
+                placeholder="입출력 예시를 작성하세요."
+              />
+            </div>
 
-    {/* 🟢 4. 결과 예시 이미지 업로드 버튼 영역 (추가된 부분) */}
-    <div className="space-y-1.5">
-      <Label className="text-xs font-bold flex items-center gap-1.5">
-        <ImageIcon className="size-3.5 text-indigo-600" /> 결과 예시 이미지 첨부
-      </Label>
+            {/* 🟢 4. 결과 예시 이미지 업로드 버튼 영역 */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold flex items-center gap-1.5">
+                <ImageIcon className="size-3.5 text-indigo-600" /> 결과 예시 이미지 첨부
+              </Label>
 
-      {newExampleImageUrl ? (
-        <div className="relative border border-slate-200 rounded-lg p-2 bg-slate-50 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img
-              src={newExampleImageUrl}
-              alt="결과 예시 미리보기"
-              className="h-14 w-14 object-cover rounded-md border border-slate-200 bg-white"
-            />
-            <span className="text-xs text-slate-600 truncate max-w-[220px]">
-              {newExampleImageUrl}
-            </span>
+              {newExampleImageUrl ? (
+                <div className="relative border border-slate-200 rounded-lg p-2 bg-slate-50 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={newExampleImageUrl}
+                      alt="결과 예시 미리보기"
+                      className="h-14 w-14 object-cover rounded-md border border-slate-200 bg-white"
+                    />
+                    <span className="text-xs text-slate-600 truncate max-w-[220px]">
+                      {newExampleImageUrl}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleNewImageDelete}
+                    className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 h-8 px-2"
+                  >
+                    <Trash2Icon className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 transition-colors">
+                    {uploadingImage ? (
+                      <LoaderCircleIcon className="animate-spin size-4 text-indigo-600" />
+                    ) : (
+                      <UploadIcon className="size-4 text-indigo-600" />
+                    )}
+                    이미지 첨부하기
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={uploadingImage}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) handleNewImageUpload(file)
+                      }}
+                    />
+                  </label>
+                  <span className="text-[11px] text-slate-400">
+                    결과 화면 스크린샷 등을 등록할 수 있습니다.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* 5. 배점 */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold">배점</Label>
+              <Input
+                type="number"
+                value={newScore}
+                onChange={(e) => setNewScore(e.target.value)}
+                className="w-28"
+              />
+            </div>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={handleNewImageDelete}
-            className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 h-8 px-2"
-          >
-            <Trash2Icon className="size-4" />
-          </Button>
-        </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 transition-colors">
-            {uploadingImage ? (
-              <LoaderCircleIcon className="animate-spin size-4 text-indigo-600" />
-            ) : (
-              <UploadIcon className="size-4 text-indigo-600" />
-            )}
-            이미지 첨부하기
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              disabled={uploadingImage}
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) handleNewImageUpload(file)
-              }}
-            />
-          </label>
-          <span className="text-[11px] text-slate-400">
-            결과 화면 스크린샷 등을 등록할 수 있습니다.
-          </span>
-        </div>
-      )}
-    </div>
-
-    {/* 5. 배점 */}
-    <div className="space-y-1.5">
-      <Label className="text-xs font-bold">배점</Label>
-      <Input
-        type="number"
-        value={newScore}
-        onChange={(e) => setNewScore(e.target.value)}
-        className="w-28"
-      />
-    </div>
-  </div>
-  <DialogFooter>
-    <Button
-      onClick={onAdd}
-      disabled={isSubmitting || uploadingImage}
-      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-    >
-      {isSubmitting ? (
-        <LoaderCircleIcon className="animate-spin" />
-      ) : (
-        '생성하기'
-      )}
-    </Button>
-  </DialogFooter>
-</DialogContent>
+          <DialogFooter>
+            <Button
+              onClick={onAdd}
+              disabled={isSubmitting || uploadingImage}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+            >
+              {isSubmitting ? (
+                <LoaderCircleIcon className="animate-spin" />
+              ) : (
+                '생성하기'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
 
       {/* 데이터 테이블 */}
@@ -445,8 +428,8 @@ const handleNewImageUpload = async (file: File) => {
                   </div>
                 </th>
                 <th className="px-4 py-2 text-left font-medium">문제 제목</th>
-                <th className="px-3 py-2 font-medium">맞춘 확률</th>
-                <th className="px-3 py-2 font-medium">시도한 횟수</th>
+                <th className="px-3 py-2 font-medium">제출 여부</th>
+                {/* 시도한 횟수 열 삭제됨 */}
                 <th className="px-3 py-2 font-medium">최종 제출 시간</th>
                 <th className="px-3 py-2 font-medium">배점</th>
                 <th className="px-3 py-2 font-medium">첨부파일</th>
@@ -499,12 +482,10 @@ const handleNewImageUpload = async (file: File) => {
                       {q.title}
                     </td>
                     <td>
-                      <AccuracyBadge accuracy={q.stats?.accuracy ?? null} />
+                      <SubmissionBadge attemptsCount={q.my_attempt?.attempts_count ?? 0} />
                     </td>
 
-                    <td className="font-bold text-slate-800">
-                      {`${q.my_attempt?.attempts_count ?? 0}회`}
-                    </td>
+                    {/* 시도한 횟수 td 삭제됨 */}
 
                     <td className="text-slate-600 font-mono text-[11px]">
                       {formattedDate !== '-' ? (
