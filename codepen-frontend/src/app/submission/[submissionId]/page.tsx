@@ -37,6 +37,10 @@ function IndividualSubmissionContent() {
 
   const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview')
 
+  // 🟢 [추가] 제출 당시 백엔드 스냅샷에서 불러온 소스코드 상태
+  const [snapshotCode, setSnapshotCode] = useState<string>('')
+  const [isLoadingCode, setIsLoadingCode] = useState(false)
+
   const [score, setScore] = useState<string>('')
   const [reason, setReason] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -116,7 +120,6 @@ function IndividualSubmissionContent() {
         const mergedData = { ...subData, problem: problemData }
         setSubmission(mergedData)
 
-        // 🟢 교수님이 부여한 기존 점수 바인딩 (professor_score 우선순위 설정)
         const currentScore = mergedData.professor_score ?? mergedData.professorScore ?? mergedData.score
         if (currentScore !== undefined && currentScore !== null) {
           setScore(String(currentScore))
@@ -125,6 +128,31 @@ function IndividualSubmissionContent() {
         const currentReason = mergedData.reason ?? mergedData.feedback ?? mergedData.professor_reason
         if (currentReason) {
           setReason(currentReason)
+        }
+
+        // 🟢 [핵심] 제출된 경우 백엔드 스냅샷(ZIP)에서 index.html 소스코드 가져오기
+        const targetSubId = mergedData.submission_id || mergedData.id || rawSubId
+        if (targetSubId && mergedData.status === 'SUBMITTED') {
+          setIsLoadingCode(true)
+          try {
+            // CodePen 구조에 따라 index.html 또는 index.js 등 주요 파일 요청
+            const codeRes = await fetch(`/api/submission/${targetSubId}/codepen_code/src/index.html`)
+            if (codeRes.ok) {
+              const codeText = await codeRes.text()
+              setSnapshotCode(codeText)
+            } else {
+              // Fallback 시도 (다른 경로 형태일 경우)
+              const codeResFallback = await fetch(`/api/submission/${targetSubId}/codepen_code/index.html`)
+              if (codeResFallback.ok) {
+                const codeText = await codeResFallback.text()
+                setSnapshotCode(codeText)
+              }
+            }
+          } catch (codeErr) {
+            console.warn('스냅샷 소스코드 로드 실패:', codeErr)
+          } finally {
+            setIsLoadingCode(false)
+          }
         }
 
       } catch (err) {
@@ -174,42 +202,6 @@ function IndividualSubmissionContent() {
     }
   }
 
-  const getCodepenEmbedUrl = (rawUrl: string, mode: 'preview' | 'code') => {
-    if (!rawUrl) return null
-
-    try {
-      const match = rawUrl.match(/codepen\.io\/([^/]+)\/(?:pen|full|details|embed)\/([^/?#]+)/)
-      if (match) {
-        const [, user, penId] = match
-        const defaultTab = mode === 'code' ? 'html,css,result' : 'result'
-        return `https://codepen.io/${user}/embed/${penId}?default-tab=${defaultTab}&theme-id=light`
-      }
-      return rawUrl
-    } catch {
-      return rawUrl
-    }
-  }
-
-  const getPreviewUrl = (mode: 'preview' | 'code') => {
-    if (!submission) return null
-
-    const targetUrl = submission.codepen_url || submission.url || submission.link
-    if (targetUrl) {
-      return getCodepenEmbedUrl(targetUrl, mode)
-    }
-
-    if (submission.filename) {
-      return `/api/submission_files/${submission.filename}/dist/index.html`
-    }
-
-    const subId = submission.submission_id || submission.id
-    if (subId && !isNaN(Number(subId))) {
-      return `/api/submission/${subId}/preview`
-    }
-
-    return null
-  }
-
   const descriptionText = questionDetail?.description 
     || submission?.problem?.description 
     || submission?.description 
@@ -232,8 +224,6 @@ function IndividualSubmissionContent() {
   if (error || !submission) return <div className="p-12 text-center text-rose-500 font-medium">제출 정보를 불러오지 못했습니다.</div>
 
   const codepenUrl = submission.codepen_url || submission.url || submission.link
-  const currentPreviewUrl = getPreviewUrl(viewMode)
-  const hasRawCode = viewMode === 'code' && !codepenUrl && (submission.html_code || submission.code || submission.content)
 
   return (
     <div className="min-h-screen bg-[#fafafa] flex flex-col">
@@ -301,7 +291,7 @@ function IndividualSubmissionContent() {
             <h1 className="text-2xl font-bold text-slate-900">
               {problemTitleText}
             </h1>
-            <p className="text-xs text-slate-500 mt-1">학생 제출 결과물 및 문제 상세 정보</p>
+            <p className="text-xs text-slate-500 mt-1">학생 제출 결과물 및 문제 상세 정보 (제출 당시 스냅샷 기준)</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -319,11 +309,11 @@ function IndividualSubmissionContent() {
             </div>
           </div>
 
-          {/* 학생 제출 결과물 및 코드 확인 영역 */}
+          {/* 학생 제출 결과물 및 스냅샷 코드/미리보기 확인 영역 */}
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <h2 className="text-sm font-bold text-slate-800">학생 제출 내역</h2>
+                <h2 className="text-sm font-bold text-slate-800">학생 제출 내역 (스냅샷 박제됨)</h2>
                 
                 <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 shadow-2xs">
                   <button
@@ -350,31 +340,36 @@ function IndividualSubmissionContent() {
                   href={codepenUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-emerald-600 font-semibold flex items-center gap-1 hover:bg-emerald-50 px-2 py-1.5 rounded-lg transition-colors border border-transparent hover:border-emerald-200"
+                  className="text-xs text-slate-400 hover:text-emerald-600 font-semibold flex items-center gap-1 hover:bg-slate-50 px-2 py-1.5 rounded-lg transition-colors border border-transparent hover:border-slate-200"
+                  title="참고용 원본 링크 (사후 수정 영향 없음)"
                 >
-                  <ExternalLinkIcon className="size-3.5" /> 원본 CodePen 열기
+                  <ExternalLinkIcon className="size-3.5" /> 참고용 원본 링크
                 </a>
               )}
             </div>
             
             <div className="w-full aspect-[16/9] rounded-xl border border-slate-200 overflow-hidden bg-slate-50 shadow-xs relative">
-              {hasRawCode ? (
+              {isLoadingCode ? (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Skeleton className="h-full w-full rounded-xl" />
+                </div>
+              ) : viewMode === 'code' ? (
                 <div className="absolute inset-0 overflow-auto p-4 bg-slate-900 text-slate-100 font-mono text-xs">
                   <pre>
-                    <code>{submission.html_code || submission.code || submission.content}</code>
+                    <code>{snapshotCode || '저장된 소스코드가 없습니다.'}</code>
                   </pre>
                 </div>
-              ) : currentPreviewUrl ? (
+              ) : snapshotCode ? (
                 <iframe
-                  src={currentPreviewUrl}
+                  srcDoc={snapshotCode}
                   className="w-full h-full border-0 bg-white"
-                  title="Student CodePen Preview"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                  title="Student Snapshot Preview"
+                  sandbox="allow-scripts"
                   loading="lazy"
                 />
               ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-slate-400 space-y-2">
-                  <p className="text-sm font-semibold text-slate-600">제출된 코드 또는 CodePen 링크가 존재하지 않습니다.</p>
+                  <p className="text-sm font-semibold text-slate-600">제출된 스냅샷 코드가 존재하지 않습니다.</p>
                 </div>
               )}
             </div>

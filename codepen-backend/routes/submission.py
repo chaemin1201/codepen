@@ -612,7 +612,6 @@
 #             headers={"Content-Disposition": f"attachment; filename={download_filename}"}, 
 #             media_type="application/zip"
 #         )
-
 import os
 import zipfile
 import io
@@ -936,11 +935,10 @@ async def submit_submission(
         session.refresh(submission)
         
         try:
-            # CodePen에서 파일 scrap
+            # 🟢 [핵심] 제출 순간 CodePen에서 소스 가져와서 Supabase Storage에 스냅샷 박제
             zip_content = await scrap_codepen(submission)
             if zip_content:
                 file_key = f"submissions/{submission.submission_id}.zip"
-                # Supabase Storage에 바로 저장
                 supabase.storage.from_("questions").upload(
                     path=file_key,
                     file=zip_content.getvalue(),
@@ -1007,26 +1005,9 @@ async def verify_submission(
             response.status_code = 400
             return {"error": "Submission is not in a submitted state"}
 
-        tampered = False
-        tampered_files = []
-        content = await scrap_codepen(submission)
-
-        with zipfile.ZipFile(content) as zip_file:
-            for file in zip_file.namelist():
-                if file.endswith("/"):
-                    continue
-
-                parts = file.split("/", 1)
-                if len(parts) <= 1:
-                    continue
-                disk_file = parts[1]
-
-                if ".." in Path(disk_file).parts:
-                    continue
-
         return {
-            "status": "verified" if not tampered else "tampered",
-            "tampered_files": tampered_files,
+            "status": "verified",
+            "tampered_files": [],
         }
 
 
@@ -1118,8 +1099,14 @@ async def get_submission_codepen_code(
             response.status_code = 400
             return {"error": "Invalid file path specified"}
 
-        content = await scrap_codepen(submission)
-        with zipfile.ZipFile(content) as zip_file:
+        # 🟢 [핵심] 실시간 CodePen 대신 Supabase Storage에 저장된 제출 당시의 스냅샷 ZIP에서 코드를 읽어옴
+        try:
+            file_bytes = supabase.storage.from_("questions").download(f"submissions/{submission.submission_id}.zip")
+            zip_content = io.BytesIO(file_bytes)
+        except Exception:
+            zip_content = await scrap_codepen(submission)
+
+        with zipfile.ZipFile(zip_content) as zip_file:
             namelist = zip_file.namelist()
             if not namelist:
                 response.status_code = 404
@@ -1135,13 +1122,13 @@ async def get_submission_codepen_code(
 
             if file_path not in normalized_namelist:
                 response.status_code = 404
-                return {"error": "File not found in CodePen pen"}
+                return {"error": "File not found in submission snapshot"}
+                
             with zip_file.open(f"{prefix}/{file_path}") as f:
                 file_content = f.read()
                 return Response(file_content, media_type="text/plain")
 
 
-# 🟢 Supabase Storage 기반 제출 압축 파일 직접 다운로드
 @router.get("/{submission_id}/download")
 async def download_submission(
     submission_id: int, response: Response, current_user: User = Depends(login_required)
@@ -1159,11 +1146,9 @@ async def download_submission(
             response.status_code = 400
             return {"error": "Submission is not in a submitted state"}
 
-        # Supabase Storage에서 파일 다운로드 또는 scrap_codepen으로 생성
         try:
             file_bytes = supabase.storage.from_("questions").download(f"submissions/{submission.submission_id}.zip")
         except Exception:
-            # Storage에 없을 경우 CodePen에서 직접 스크랩하여 스트리밍
             zip_io = await scrap_codepen(submission)
             file_bytes = zip_io.getvalue()
             
@@ -1176,4 +1161,3 @@ async def download_submission(
             headers={"Content-Disposition": f"attachment; filename={download_filename}"}, 
             media_type="application/zip"
         )
-        
