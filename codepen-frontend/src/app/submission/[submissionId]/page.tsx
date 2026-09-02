@@ -132,27 +132,41 @@ function IndividualSubmissionContent() {
 
         // 🟢 [핵심] 제출된 경우 백엔드 스냅샷(ZIP)에서 index.html 소스코드 가져오기
         const targetSubId = mergedData.submission_id || mergedData.id || rawSubId
-        if (targetSubId && mergedData.status === 'SUBMITTED') {
+        const isNumericSubId = targetSubId && !isNaN(Number(targetSubId))
+
+        if (mergedData.status === 'SUBMITTED' || mergedData.codepen_url) {
           setIsLoadingCode(true)
-          try {
-            // CodePen 구조에 따라 index.html 또는 index.js 등 주요 파일 요청
+        try {
+          let codeText: string | null = null
+
+          // 1. Submission 기반 스냅샷 시도
+          if (isNumericSubId) {
             const codeRes = await fetch(`/api/submission/${targetSubId}/codepen_code/src/index.html`)
             if (codeRes.ok) {
-              const codeText = await codeRes.text()
-              setSnapshotCode(codeText)
+              codeText = await codeRes.text()
             } else {
-              // Fallback 시도 (다른 경로 형태일 경우)
               const codeResFallback = await fetch(`/api/submission/${targetSubId}/codepen_code/index.html`)
-              if (codeResFallback.ok) {
-                const codeText = await codeResFallback.text()
-                setSnapshotCode(codeText)
-              }
+              if (codeResFallback.ok) codeText = await codeResFallback.text()
             }
-          } catch (codeErr) {
-            console.warn('스냅샷 소스코드 로드 실패:', codeErr)
-          } finally {
-            setIsLoadingCode(false)
           }
+
+          // 2. 🟢 [추가] QuestionAttempt 기반 스냅샷 시도 (Submission 스냅샷이 없을 때)
+          if (!codeText && questionIdParam && userIdParam) {
+            const qCodeRes = await fetch(`/api/question/${questionIdParam}/attempt/${userIdParam}/codepen_code/src/index.html`)
+            if (qCodeRes.ok) {
+              codeText = await qCodeRes.text()
+            } else {
+              const qCodeResFallback = await fetch(`/api/question/${questionIdParam}/attempt/${userIdParam}/codepen_code/index.html`)
+              if (qCodeResFallback.ok) codeText = await qCodeResFallback.text()
+            }
+          }
+
+          if (codeText) setSnapshotCode(codeText)
+        } catch (codeErr) {
+          console.warn('스냅샷 소스코드 로드 실패:', codeErr)
+        } finally {
+          setIsLoadingCode(false)
+         }
         }
 
       } catch (err) {

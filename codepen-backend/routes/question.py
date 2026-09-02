@@ -1,5 +1,8 @@
 import os
 import uuid
+import io
+import zipfile
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,7 +19,7 @@ from models.question import Question
 from models.question_attempt import QuestionAttempt
 from models.submission import Submission
 from utils.user import login_required
-import re
+from utils.codepen import scrap_codepen
 
 router = APIRouter(prefix="/question")
 
@@ -387,6 +390,76 @@ async def delete_question_file(
 
         return {"message": "File deleted successfully"}
 
+@router.get("/{question_id}/attempt/{user_id}/codepen_code/{file_path:path}")
+async def get_question_attempt_codepen_code(
+    question_id: int,
+    user_id: str,
+    file_path: str,
+    response: Response,
+    current_user: User = Depends(login_required),
+):
+    with Session(engine) as session:
+        question = session.get(Question, question_id)
+        if not question:
+            response.status_code = 404
+            return {"error": "Question not found"}
+
+        problem = session.get(Problem, question.problem_id)
+        group = session.get(Group, problem.group_id) if problem else None
+        if not group:
+            response.status_code = 404
+            return {"error": "Group not found"}
+
+        # 본인 제출물이거나, 그룹 소유자(교수)만 열람 가능
+        if user_id != current_user.user_id and group.owner_id != current_user.user_id:
+            response.status_code = 403
+            return {"error": "Forbidden: You can only view your own submissions"}
+
+        pure_path = Path(file_path)
+        if ".." in pure_path.parts or pure_path.is_absolute():
+            response.status_code = 400
+            return {"error": "Invalid file path specified"}
+
+        attempt = session.exec(
+            select(QuestionAttempt).where(
+                QuestionAttempt.question_id == question_id,
+                QuestionAttempt.user_id == user_id,
+            )
+        ).first()
+        if not attempt:
+            response.status_code = 404
+            return {"error": "Attempt not found"}
+
+        # 🟢 [핵심] 실시간 CodePen이 아니라 제출 당시 저장된 스냅샷 ZIP에서 코드를 읽어옴
+        try:
+            file_bytes = supabase.storage.from_("questions").download(
+                f"question_attempts/{question_id}_{user_id}.zip"
+            )
+            zip_content = io.BytesIO(file_bytes)
+        except Exception:
+            response.status_code = 404
+            return {"error": "저장된 스냅샷이 없습니다."}
+
+        with zipfile.ZipFile(zip_content) as zip_file:
+            namelist = zip_file.namelist()
+            if not namelist:
+                response.status_code = 404
+                return {"error": "Empty archive"}
+
+            prefix = namelist[0].split("/")[0]
+            normalized_namelist = []
+            for f in namelist:
+                parts = f.split("/", 1)
+                if len(parts) > 1:
+                    normalized_namelist.append(parts[1])
+
+            if file_path not in normalized_namelist:
+                response.status_code = 404
+                return {"error": "File not found in submission snapshot"}
+
+            with zip_file.open(f"{prefix}/{file_path}") as f:
+                file_content = f.read()
+                return Response(file_content, media_type="text/plain")
 
 @router.delete("/{question_id}")
 async def delete_question(
@@ -649,6 +722,22 @@ async def submit_question(
 
         session.add(attempt)
         session.commit()
+        session.refresh(attempt)
+
+        # 🟢 [추가] 제출 순간 CodePen 소스를 긁어와 Supabase Storage에 스냅샷 박제
+        # (이후 학생이 CodePen을 고쳐도 채점 시 보이는 코드는 이 시점 것으로 고정됨)
+        try:
+            zip_content = await scrap_codepen(attempt)
+            if zip_content:
+                file_key = f"question_attempts/{question_id}_{current_user.user_id}.zip"
+                supabase.storage.from_("questions").upload(
+                    path=file_key,
+                    file=zip_content.getvalue(),
+                    file_options={"content-type": "application/zip", "upsert": "true"}
+                )
+        except Exception as e:
+            # 스냅샷 저장에 실패해도 제출 자체(codepen_url 기록)는 유지
+            print(f"Warning: Failed to snapshot CodePen for question {question_id}, user {current_user.user_id}: {e}")
 
         return {
             "message": "Question submitted successfully",
@@ -713,3 +802,5 @@ async def save_attempt_score(
         session.refresh(attempt)
 
         return {"message": "Score saved successfully", "score": body.score}
+
+    

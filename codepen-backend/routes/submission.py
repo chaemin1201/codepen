@@ -901,10 +901,9 @@ async def submit_submission(
     submission_id: int, 
     body: SubmitBody,
     response: Response, 
-    # current_user: User = Depends(login_required)
+    current_user: User = Depends(login_required)
 ):
     with Session(engine) as session:
-        current_user = session.exec(select(User)).first()
         submission = session.get(Submission, submission_id)
         if not submission:
             response.status_code = 404
