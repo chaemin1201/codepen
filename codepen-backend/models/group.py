@@ -20,6 +20,9 @@ class Group(SQLModel, table=True):
     owner_id: str = Field(foreign_key="user.user_id", nullable=False)
     invite_code: str = Field(nullable=False, unique=True)
 
+    # 🟢 [추가] 이 그룹이 사용할 실습 플랫폼: "codepen" 또는 "colab"
+    platform: str = Field(default="codepen", nullable=False)
+
     created_at: datetime | None = Field(
         sa_column=Column(
             DateTime(timezone=True),

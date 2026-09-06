@@ -43,7 +43,12 @@ class PartialProblem(BaseModel):
     difficulty: str | None = "easy"
     starts_at: str | None = None
     deadline: str | None = None
-    hide_before_start: bool = False
+    # 🟢 [수정] bool = False 였던 걸 bool | None = None 으로 변경.
+    # 예전 타입(bool)은 값을 안 보내도 Pydantic이 항상 False로 채워버려서,
+    # update_problem의 "if problem.hide_before_start is not None:" 체크가
+    # 항상 참이 되어 매번 무조건 False로 덮어써지는 버그가 있었습니다.
+    # (제목/설명만 수정하려고 이 필드를 안 보내도 "시작 전 숨김"이 꺼져버림)
+    hide_before_start: bool | None = None
 
 
 router = APIRouter(prefix="/problem")
@@ -86,7 +91,8 @@ async def create_problem(
             difficulty=problem.difficulty,
             starts_at=parsed_starts_at,
             deadline=parsed_deadline,
-            hide_before_start=problem.hide_before_start,
+            # 🟢 [수정] 이제 None이 올 수 있으니, 생성 시에는 None이면 False로 처리
+            hide_before_start=bool(problem.hide_before_start),
         )
         session.add(new_problem)
         session.commit()

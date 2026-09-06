@@ -253,108 +253,37 @@
 #     if p:
 #         await p.stop()
 
-
 import io
-import os
-import re
-import uuid
-import zipfile
-import shutil
-import httpx
-from pathlib import Path
-
 from models.submission import Submission
 
-# CodePen URL 파싱을 위한 정규식 (pen, collab, full, details 등 모두 호환)
-CODEPEN_URL_REGEX = r"https:\/\/codepen\.io\/(.+)\/(?:pen|collab|full|details)\/(.+)(\/.+)?"
+# =====================================================================
+# [Deprecated] CodePen 스크래핑 모듈 (더미화)
+# CodePen의 익명 접근 차단(403)으로 인해 프론트엔드 직접 전송 방식으로 변경되었습니다.
+# 환경변수(CP_SESSION) 및 httpx 통신 로직을 전면 제거하였으며, 
+# 기존 다른 파일들에서 발생하는 import 에러를 방지하기 위해 함수 형태만 유지합니다.
+# =====================================================================
 
 async def get_codepen_zip_url(codepen_url: str) -> str:
-    """학생이 제출한 URL을 CodePen 네이티브 압축파일 다운로드 API URL로 변환합니다."""
-    match = re.match(CODEPEN_URL_REGEX, codepen_url)
-    if not match:
-        raise ValueError(f"유효하지 않은 CodePen URL입니다: {codepen_url}")
-    
-    username = match.group(1)
-    pen_id = match.group(2)
-    # CodePen의 공식 Export API 엔드포인트
-    return f"https://codepen.io/{username}/share/zip/{pen_id}"
-
+    """사용 안 함"""
+    return ""
 
 async def download_codepen(submission: Submission):
-    """학생이 제출한 CodePen URL에서 압축 파일을 다운로드하여 서버에 안전하게 저장합니다."""
-    if not submission.codepen_url:
-        raise ValueError("제출 내역에 CodePen URL이 없습니다.")
+    """사용 안 함 (프론트엔드 전송 방식으로 대체)"""
+    pass
 
-    zip_url = await get_codepen_zip_url(submission.codepen_url)
-    
-    # httpx를 사용해 가볍게 zip 파일 다운로드
-    async with httpx.AsyncClient() as client:
-        response = await client.get(zip_url, follow_redirects=True)
-        if response.status_code != 200:
-            raise Exception(f"CodePen 다운로드 실패 (상태 코드: {response.status_code})")
-        zip_content = response.content
-
-    # 안전한 디렉토리 이름 생성 및 타겟 경로 설정
-    safe_filename = os.path.basename(submission.filename) if submission.filename else str(uuid.uuid4())
-    base_target_dir = Path("submissions") / safe_filename
-    base_target_dir.mkdir(parents=True, exist_ok=True)
-
-    # 다운로드한 데이터를 메모리에서 바로 압축 해제 (임시 파일 생성 불필요)
-    with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_file:
-        for file in zip_file.namelist():
-            # 디렉토리 엔트리는 제외
-            if file.endswith("/"):
-                continue
-            
-            path_parts = Path(file).parts
-            if not path_parts:
-                continue
-            
-            # 압축 파일 내의 최상위 폴더명 제거
-            cleaned_relative_path = Path(*path_parts[1:])
-            
-            # 💡 보안 보완 1: 악의적 상위 우회 경로(Zip Slip) 검증 차단
-            if ".." in cleaned_relative_path.parts:
-                continue
-                
-            final_target_path = (base_target_dir / cleaned_relative_path).resolve()
-            
-            # 💡 보안 보완 2: 샌드박스(base_target_dir) 경계 밖으로 나가는지 확인
-            if not final_target_path.is_relative_to(base_target_dir.resolve()):
-                continue
-
-            # 파일이 위치할 폴더 생성 및 저장
-            final_target_path.parent.mkdir(parents=True, exist_ok=True)
-            with zip_file.open(file) as source, open(final_target_path, "wb") as f:
-                shutil.copyfileobj(source, f)
-
-
-async def scrap_codepen(submission: Submission) -> io.BytesIO:
-    """(검증용) CodePen에서 코드를 메모리로 바로 받아와 Zip 객체로 반환합니다."""
-    if not submission.codepen_url:
-        raise ValueError("제출 내역에 CodePen URL이 없습니다.")
-
-    zip_url = await get_codepen_zip_url(submission.codepen_url)
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.get(zip_url, follow_redirects=True)
-        if response.status_code != 200:
-            raise Exception(f"CodePen 스크랩 실패 (상태 코드: {response.status_code})")
-        
-    return io.BytesIO(response.content)
+async def scrap_codepen(submission) -> io.BytesIO | None:
+    """사용 안 함 (routes/question.py 에서 프론트엔드 데이터를 받아 직접 ZIP을 생성함)"""
+    return None
 
 
 # =====================================================================
-# 아래 함수들은 Option A로 전환하며 더 이상 브라우저 자동화가 필요 없으므로 
-# 내부 로직을 비운 더미(Dummy) 함수로 둡니다. 
-# (다른 파일에서 import 에러가 나지 않도록 형태만 유지)
+# 이전 브라우저 자동화(Selenium/Playwright) 관련 더미 함수들
 # =====================================================================
 
 async def initialize_codepen():
     pass
 
 async def create_codepen(submission: Submission) -> str:
-    """Option A에서는 시스템이 CodePen을 생성하지 않으므로 사용되지 않습니다."""
     return ""
 
 async def refresh_codepen_auth():

@@ -22,12 +22,38 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-// 🟢 제출 상태 ('SUBMITTED' | 'NOT_SUBMITTED')
+// 🟢 제출 상태 ('SUBMITTED' | 'LATE' | 'NOT_SUBMITTED')
+// LATE: 기간(마감) 이후에 제출된 경우 - lateBy에 얼마나 늦었는지 문자열로 표시
 interface ProblemStatus {
   problemId: string
-  status: 'SUBMITTED' | 'NOT_SUBMITTED'
+  status: 'SUBMITTED' | 'LATE' | 'NOT_SUBMITTED'
   submittedAt?: string
-  deadline: string 
+  deadline: string
+  deadlineRaw?: string
+  lateBy?: string
+}
+
+// 🕒 마감(deadlineRaw)과 제출 시각(submittedRaw)을 비교해 얼마나 늦었는지 사람이 읽기 쉬운 문자열로 반환
+function calcLateBy (deadlineRaw?: string, submittedRaw?: string): string | undefined {
+  if (!deadlineRaw || !submittedRaw) return undefined
+
+  const toDate = (v: string) => new Date(
+    typeof v === 'string' && !v.endsWith('Z') && !v.includes('+') ? `${v}Z` : v
+  )
+
+  const deadlineDate = toDate(deadlineRaw)
+  const submittedDate = toDate(submittedRaw)
+  const diffMs = submittedDate.getTime() - deadlineDate.getTime()
+  if (diffMs <= 0) return undefined
+
+  const diffMin = Math.floor(diffMs / 60000)
+  const days = Math.floor(diffMin / (60 * 24))
+  const hours = Math.floor((diffMin % (60 * 24)) / 60)
+  const minutes = diffMin % 60
+
+  if (days > 0) return `${days}일 ${hours}시간 늦음`
+  if (hours > 0) return `${hours}시간 ${minutes}분 늦음`
+  return `${minutes}분 늦음`
 }
 
 interface StudentRow {
@@ -85,6 +111,7 @@ function SubmissionStatusContent() {
         })
       }
       const deadlineStr = formatDeadline(problemData.deadline)
+      const deadlineRaw: string | undefined = problemData.deadline || undefined
 
       // 2. 소문제 목록 가져오기
       const questionsRes = await fetch(`/api/question/problem/${problemIdParam}`)
@@ -124,6 +151,7 @@ function SubmissionStatusContent() {
                   problemId: mq.id,
                   status: 'NOT_SUBMITTED',
                   deadline: deadlineStr,
+                  deadlineRaw,
                 })),
               })
             })
@@ -172,6 +200,7 @@ function SubmissionStatusContent() {
                 problemId: mq.id,
                 status: 'NOT_SUBMITTED',
                 deadline: deadlineStr,
+                deadlineRaw,
               })),
             }
             studentsMap.set(newKey, studentEntry)
@@ -192,9 +221,18 @@ function SubmissionStatusContent() {
             const attemptsCount = Number(att.attempts_count || 0)
 
             if (attemptsCount > 0 || !!submissionTime) {
-              probEntry.status = 'SUBMITTED'
               if (submissionTime) {
                 probEntry.submittedAt = formatDeadline(submissionTime)
+                // 🟢 마감(deadlineRaw) 이후 제출이면 LATE, 아니면 SUBMITTED로 구분
+                const lateBy = calcLateBy(probEntry.deadlineRaw, submissionTime)
+                if (lateBy) {
+                  probEntry.status = 'LATE'
+                  probEntry.lateBy = lateBy
+                } else {
+                  probEntry.status = 'SUBMITTED'
+                }
+              } else {
+                probEntry.status = 'SUBMITTED'
               }
             }
           }
@@ -214,32 +252,47 @@ function SubmissionStatusContent() {
     fetchStatusData()
   }, [problemIdParam])
 
-  // 🟢 수치 집계: 모든 소문제를 다 풀었을 때만 '완료 인원'으로 간주
+  // 🟢 수치 집계: 모든 소문제를 '기한 내(SUBMITTED)' 또는 '늦게라도(LATE)' 다 풀었을 때 '완료 인원'으로 간주
   const totalStudentsCount = studentList.length
-  
+
   const fullySubmittedStudentsCount = studentList.filter((s) =>
-    s.problems.length > 0 && s.problems.every((p) => p.status === 'SUBMITTED')
+    s.problems.length > 0 && s.problems.every((p) => p.status === 'SUBMITTED' || p.status === 'LATE')
+  ).length
+
+  const lateIncludedStudentsCount = studentList.filter((s) =>
+    s.problems.some((p) => p.status === 'LATE')
   ).length
 
   const notSubmittedStudentsCount = totalStudentsCount - fullySubmittedStudentsCount
 
-  // 셀 렌더링 (제출 완료: 초록 아이콘 / 미제출: 빨간색 아이콘 및 경고 배경)
+  // 셀 렌더링 (제출 완료: 초록 아이콘 / 제출 늦음: 주황 시계 아이콘 + 늦은 시간 / 미제출: 빨간 아이콘)
   const renderStatusCell = (prob: ProblemStatus) => {
     const isNotSubmitted = prob.status === 'NOT_SUBMITTED'
+    const isLate = prob.status === 'LATE'
 
     return (
-      <td key={prob.problemId} className={`py-4 px-4 text-center ${isNotSubmitted ? 'bg-rose-50/70' : ''}`}>
+      <td key={prob.problemId} className={`py-4 px-4 text-center ${isNotSubmitted ? 'bg-rose-50/70' : isLate ? 'bg-amber-50/70' : ''}`}>
         <div className="group relative inline-block">
-          {prob.status === 'SUBMITTED' ? (
+          {prob.status === 'SUBMITTED' && (
             <CheckCircle2Icon className="size-5 text-emerald-500 mx-auto" />
-          ) : (
+          )}
+          {isLate && (
+            <ClockIcon className="size-5 text-amber-500 mx-auto" />
+          )}
+          {isNotSubmitted && (
             <XCircleIcon className="size-5 text-rose-500 mx-auto" />
           )}
-          
+
+          {isLate && (
+            <span className="block text-[9px] font-bold text-amber-600 mt-0.5 whitespace-nowrap">
+              {prob.lateBy}
+            </span>
+          )}
+
           {prob.submittedAt && (
             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:flex items-center gap-1 whitespace-nowrap text-white text-[10px] px-2 py-1 rounded shadow-md z-10 bg-slate-900">
-              <ClockIcon className="size-3" /> 
-              {prob.submittedAt}
+              <ClockIcon className="size-3" />
+              {isLate ? `${prob.submittedAt} (${prob.lateBy})` : prob.submittedAt}
             </span>
           )}
         </div>
@@ -304,6 +357,11 @@ function SubmissionStatusContent() {
             <p className="text-2xl font-extrabold text-emerald-700">{fullySubmittedStudentsCount}<span className="text-sm font-medium">명</span></p>
           </div>
 
+          <div className="flex-1 rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3 text-center shadow-2xs">
+            <p className="text-xs text-amber-600 font-medium">늦은 제출 포함</p>
+            <p className="text-2xl font-extrabold text-amber-600">{lateIncludedStudentsCount}<span className="text-sm font-medium">명</span></p>
+          </div>
+
           <div className="flex-1 rounded-xl border border-rose-200 bg-rose-50/50 px-4 py-3 text-center shadow-2xs">
             <p className="text-xs text-rose-600 font-medium">미완료 인원</p>
             <p className="text-2xl font-extrabold text-rose-600">{notSubmittedStudentsCount}<span className="text-sm font-medium">명</span></p>
@@ -313,7 +371,8 @@ function SubmissionStatusContent() {
         {/* 범례 및 새로고침 */}
         <div className="flex justify-between items-center pt-2">
           <div className="flex items-center gap-5 text-xs text-slate-600 font-medium">
-            <span className="flex items-center gap-1.5"><CheckCircle2Icon className="size-4 text-emerald-500" /> 제출 완료</span>
+            <span className="flex items-center gap-1.5"><CheckCircle2Icon className="size-4 text-emerald-500" /> 제출 완료(기한 내)</span>
+            <span className="flex items-center gap-1.5"><ClockIcon className="size-4 text-amber-500" /> 제출 늦음</span>
             <span className="flex items-center gap-1.5"><XCircleIcon className="size-4 text-rose-500" /> 미제출</span>
           </div>
         </div>
@@ -345,12 +404,14 @@ function SubmissionStatusContent() {
                     </th>
                   ))}
                   <th className="py-3 px-4 font-semibold text-center text-emerald-600">제출 완료</th>
+                  <th className="py-3 px-4 font-semibold text-center text-amber-500">제출 늦음</th>
                   <th className="py-3 px-4 font-semibold text-center text-rose-500">미제출</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {studentList.map((student) => {
                   const submittedCount = student.problems.filter((p) => p.status === 'SUBMITTED').length
+                  const lateCount = student.problems.filter((p) => p.status === 'LATE').length
                   const notSubmittedCount = student.problems.filter((p) => p.status === 'NOT_SUBMITTED').length
 
                   return (
@@ -368,6 +429,7 @@ function SubmissionStatusContent() {
                       {student.problems.map((prob) => renderStatusCell(prob))}
 
                       <td className="py-4 px-4 text-center font-bold text-emerald-600">{submittedCount}</td>
+                      <td className="py-4 px-4 text-center font-bold text-amber-500">{lateCount}</td>
                       <td className="py-4 px-4 text-center font-bold text-rose-500">{notSubmittedCount}</td>
                     </tr>
                   )
@@ -375,7 +437,7 @@ function SubmissionStatusContent() {
                 
                 {studentList.length === 0 && (
                   <tr>
-                    <td colSpan={4 + problemList.length} className="py-8 text-center text-slate-500">
+                    <td colSpan={5 + problemList.length} className="py-8 text-center text-slate-500">
                       현황 데이터가 존재하지 않습니다.
                     </td>
                   </tr>

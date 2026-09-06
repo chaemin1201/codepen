@@ -634,92 +634,125 @@ function IntegratedGroupPageContent() {
         </div>
       </div>
 
-      {/* 🔲 모달 영역 */}
+      {/* 🔲 모달 영역 (그룹 개설 다이얼로그와 동일한 톤 - 검정/흰색 대신 그린 계열 사용) */}
       <Dialog open={isAddCatModalOpen} onOpenChange={setIsAddCatModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{newCatType === 'general' ? '일반 문제지' : '시험 문제지'} 항목 추가</DialogTitle>
+        <DialogContent className='bg-[#FCFCFC] text-foreground border-slate-100 rounded-3xl p-6 shadow-lg max-w-md'>
+          <DialogHeader className='border-b border-slate-100 pb-4'>
+            <DialogTitle className='text-xl font-bold text-foreground'>
+              {newCatType === 'general' ? '일반 문제지' : '시험 문제지'} 항목 추가
+            </DialogTitle>
           </DialogHeader>
-          <div className='space-y-4 py-2'>
-            <div className='space-y-2'>
-              <Label htmlFor='cat-title'>항목명 (예: 6주차, 기말고사 등)</Label>
-              <Input 
-                id='cat-title' 
-                placeholder='이름을 입력하세요' 
-                value={newCatTitle} 
-                onChange={(e) => setNewCatTitle(e.target.value)} 
+          <div className='flex flex-col gap-3.5 py-4'>
+            <div className='flex flex-col gap-1.5'>
+              <Label htmlFor='cat-title' className='text-xs font-bold text-[#173A23] px-0.5'>
+                항목명 (예: 6주차, 기말고사 등)
+              </Label>
+              <Input
+                id='cat-title'
+                placeholder='이름을 입력하세요'
+                value={newCatTitle}
+                onChange={(e) => setNewCatTitle(e.target.value)}
+                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
               />
             </div>
-            <div className='space-y-2'>
-              <Label htmlFor='cat-start-date'>시작 날짜 (선택 - 입력하면 7일 뒤가 자동으로 종료일이 되고, 현재 기간에 맞춰 &quot;현재 주차&quot;로 표시돼요)</Label>
+            <div className='flex flex-col gap-1.5'>
+              <Label htmlFor='cat-start-date' className='text-xs font-bold text-[#173A23] px-0.5'>
+                시작 날짜 (선택)
+              </Label>
               <Input
                 id='cat-start-date'
                 type='date'
                 value={newCatStartDate}
                 onChange={(e) => setNewCatStartDate(e.target.value)}
+                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
               />
+              <p className='text-[11px] text-[#868C88] px-0.5'>
+                입력하면 7일 뒤가 자동으로 종료일이 되고, 이 기간 안에 제출한 문제지는 &quot;제출&quot;로, 기간이 지난 뒤 제출하면 얼마나 늦었는지와 함께 &quot;제출 늦음&quot;으로 표시돼요.
+              </p>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant='outline' onClick={() => setIsAddCatModalOpen(false)}>취소</Button>
-            <Button onClick={handleAddCategory}>항목 추가하기</Button>
+          <DialogFooter className='sm:justify-center'>
+            <Button
+              variant='outline'
+              onClick={() => setIsAddCatModalOpen(false)}
+              className='rounded-xl border-[#EBF1F4] text-[#868C88] hover:bg-[#FCFCFC] hover:text-[#173A23]'
+            >
+              취소
+            </Button>
+            <Button
+              onClick={handleAddCategory}
+              disabled={!newCatTitle.trim()}
+              className='bg-[#589960] hover:bg-[#173A23] text-white font-bold rounded-xl px-5 transition-colors'
+            >
+              항목 추가하기
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={isCreateProblemModalOpen} onOpenChange={setIsCreateProblemModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>새 문제지 생성하기</DialogTitle>
+        <DialogContent className='bg-[#FCFCFC] text-foreground border-slate-100 rounded-3xl p-6 shadow-lg max-w-md'>
+          <DialogHeader className='border-b border-slate-100 pb-4'>
+            <DialogTitle className='text-xl font-bold text-foreground'>새 문제지 생성하기</DialogTitle>
           </DialogHeader>
-          <div className='space-y-4 py-2 max-h-[70vh] overflow-y-auto'>
-            <div className='space-y-2'>
-              <Label htmlFor='prob-title'>문제지 제목</Label>
-              <Input 
-                id='prob-title' 
-                placeholder='문제지 제목을 입력하세요' 
-                value={newProblemTitle} 
-                onChange={(e) => setNewProblemTitle(e.target.value)} 
+          <div className='flex flex-col gap-3.5 py-4 max-h-[70vh] overflow-y-auto'>
+            <div className='flex flex-col gap-1.5'>
+              <Label htmlFor='prob-title' className='text-xs font-bold text-[#173A23] px-0.5'>문제지 제목</Label>
+              <Input
+                id='prob-title'
+                placeholder='문제지 제목을 입력하세요'
+                value={newProblemTitle}
+                onChange={(e) => setNewProblemTitle(e.target.value)}
+                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
               />
             </div>
-            <div className='space-y-2'>
-              <Label htmlFor='prob-desc'>문제지 소개</Label>
+            <div className='flex flex-col gap-1.5'>
+              <Label htmlFor='prob-desc' className='text-xs font-bold text-[#173A23] px-0.5'>문제지 소개</Label>
               <Textarea
                 id='prob-desc'
                 placeholder='문제지에 대한 간단한 설명을 입력하세요 (선택)'
                 value={newProblemDescription}
                 onChange={(e) => setNewProblemDescription(e.target.value)}
                 rows={3}
+                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl resize-none p-3.5 text-sm'
               />
             </div>
-            <div className='space-y-2'>
-              <Label htmlFor='prob-cat'>등록할 항목 선택</Label>
-              <select 
-                id='prob-cat' 
-                className='w-full border rounded-md p-2 text-sm bg-background'
+            <div className='flex flex-col gap-1.5'>
+              <Label htmlFor='prob-cat' className='text-xs font-bold text-[#173A23] px-0.5'>등록할 항목 선택</Label>
+              <select
+                id='prob-cat'
+                className='w-full border border-[#EBF1F4] rounded-xl h-11 px-3.5 text-sm bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
                 value={newProblemTargetCat}
                 onChange={(e) => setNewProblemTargetCat(e.target.value)}
               >
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
-                    [{c.type === 'general' ? '일반' : '시험'}] {c.title}
+                    [{c.type === 'general' ? '일반' : '시험'}] {c.title}{c.period ? ` · ${c.period}` : ''}
                   </option>
                 ))}
               </select>
+              {(() => {
+                const selectedCat = categories.find((c) => c.id === newProblemTargetCat)
+                return selectedCat?.period ? (
+                  <p className='text-[11px] text-[#868C88] px-0.5'>
+                    선택한 항목의 기간은 <strong className='text-[#589960]'>{selectedCat.period}</strong> 이에요. 아래 게시/마감 시간을 이 기간에 맞춰 입력하면, 기간 안에 제출 시 &quot;제출&quot;로, 기간 이후 제출 시 &quot;제출 늦음&quot;(얼마나 늦었는지 함께 표시)으로 자동 구분돼요.
+                  </p>
+                ) : null
+              })()}
             </div>
-            <div className='space-y-2'>
-              <Label>게시 시작 시간</Label>
+            <div className='flex flex-col gap-1.5'>
+              <Label className='text-xs font-bold text-[#173A23] px-0.5'>게시 시작 시간</Label>
               <div className='flex gap-1.5'>
                 <Input
                   type='date'
                   value={newProblemStartDate}
                   onChange={(e) => setNewProblemStartDate(e.target.value)}
-                  className='flex-1'
+                  className='flex-1 bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
                 />
                 <select
                   value={newProblemStartHour}
                   onChange={(e) => setNewProblemStartHour(e.target.value)}
-                  className='border rounded-md px-1 text-sm'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
                 >
                   {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map((h) => (
                     <option key={h} value={h}>{h}</option>
@@ -728,7 +761,7 @@ function IntegratedGroupPageContent() {
                 <select
                   value={newProblemStartMinute}
                   onChange={(e) => setNewProblemStartMinute(e.target.value)}
-                  className='border rounded-md px-1 text-sm'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
                 >
                   {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map((m) => (
                     <option key={m} value={m}>{m}</option>
@@ -736,19 +769,19 @@ function IntegratedGroupPageContent() {
                 </select>
               </div>
             </div>
-            <div className='space-y-2'>
-              <Label>제출 마감 시간</Label>
+            <div className='flex flex-col gap-1.5'>
+              <Label className='text-xs font-bold text-[#173A23] px-0.5'>제출 마감 시간</Label>
               <div className='flex gap-1.5'>
                 <Input
                   type='date'
                   value={newProblemDeadlineDate}
                   onChange={(e) => setNewProblemDeadlineDate(e.target.value)}
-                  className='flex-1'
+                  className='flex-1 bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
                 />
                 <select
                   value={newProblemDeadlineHour}
                   onChange={(e) => setNewProblemDeadlineHour(e.target.value)}
-                  className='border rounded-md px-1 text-sm'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
                 >
                   {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map((h) => (
                     <option key={h} value={h}>{h}</option>
@@ -757,18 +790,30 @@ function IntegratedGroupPageContent() {
                 <select
                   value={newProblemDeadlineMinute}
                   onChange={(e) => setNewProblemDeadlineMinute(e.target.value)}
-                  className='border rounded-md px-1 text-sm'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
                 >
                   {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map((m) => (
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
               </div>
+              <p className='text-[11px] text-[#868C88] px-0.5'>
+                이 시간이 지나서 제출하면 &quot;제출 늦음&quot;으로 표시되고, 얼마나 늦었는지 함께 보여줘요.
+              </p>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant='outline' onClick={() => setIsCreateProblemModalOpen(false)}>취소</Button>
-            <Button className='bg-emerald-600 hover:bg-emerald-700 text-white' onClick={handleCreateProblem}>
+          <DialogFooter className='sm:justify-center'>
+            <Button
+              variant='outline'
+              onClick={() => setIsCreateProblemModalOpen(false)}
+              className='rounded-xl border-[#EBF1F4] text-[#868C88] hover:bg-[#FCFCFC] hover:text-[#173A23]'
+            >
+              취소
+            </Button>
+            <Button
+              className='bg-[#589960] hover:bg-[#173A23] text-white font-bold rounded-xl px-5 transition-colors'
+              onClick={handleCreateProblem}
+            >
               생성 및 추가
             </Button>
           </DialogFooter>

@@ -52,6 +52,15 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
+// 🟢 공통 인풋 스타일: 그룹 개설하기 다이얼로그와 동일한 톤 + 포커스 시 연한 초록색 링
+const fieldInputClass =
+  'w-full bg-background text-foreground border-input rounded-xl h-10 px-3.5 text-xs ' +
+  'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
+
+const fieldTextareaClass =
+  'w-full bg-background text-foreground border-input rounded-xl resize-none p-3 text-xs ' +
+  'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
+
 // --- 제출 여부(횟수) 배지 ---
 const SubmissionBadge = ({ attemptsCount }: { attemptsCount: number }) => {
   const isSubmitted = attemptsCount > 0
@@ -273,74 +282,78 @@ function QuestionList({
     <div className="w-full space-y-3">
       <h2 className="text-xl font-bold text-slate-900">나의 문제들</h2>
 
-      {/* 문제 추가 다이얼로그 */}
+      {/* 문제 추가 다이얼로그 (🟢 그룹 개설하기 다이얼로그와 동일한 톤으로 통일) */}
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogTrigger asChild>
           <button id="add-question-trigger" className="hidden" />
         </DialogTrigger>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>새 문제 생성</DialogTitle>
+        <DialogContent className="bg-[#FCFCFC] text-foreground border-slate-100 rounded-3xl p-6 shadow-lg sm:max-w-xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader className="border-b border-slate-100 pb-4">
+            <DialogTitle className="text-xl font-bold text-foreground">새 문제 생성</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2 text-xs">
+          <div className="flex flex-col gap-3.5 py-4">
             {/* 1. 문제 이름 */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold">문제 이름</Label>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5">문제 이름</Label>
               <Input
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
                 placeholder="예: 1번. 두 수의 합 구하기"
+                className={fieldInputClass}
               />
             </div>
 
             {/* 2. 문제 설명 & 조건 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold">문제 설명</Label>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-bold text-[#173A23] px-0.5">문제 설명</Label>
                 <Textarea
                   rows={4}
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
                   placeholder="문제 상세 내용을 작성하세요."
+                  className={fieldTextareaClass}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold">조건</Label>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-bold text-[#173A23] px-0.5">조건</Label>
                 <Textarea
                   rows={4}
                   value={newCondition}
                   onChange={(e) => setNewCondition(e.target.value)}
                   placeholder="문제 풀이에 필요한 제약 조건 등을 작성하세요."
+                  className={fieldTextareaClass}
                 />
               </div>
             </div>
 
             {/* 3. 결과 예시 (텍스트) */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold">결과 예시</Label>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5">결과 예시</Label>
               <Textarea
                 rows={3}
                 value={newExample}
                 onChange={(e) => setNewExample(e.target.value)}
                 placeholder="입출력 예시를 작성하세요."
+                className={fieldTextareaClass}
               />
             </div>
 
             {/* 🟢 4. 결과 예시 이미지 업로드 버튼 영역 */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold flex items-center gap-1.5">
-                <ImageIcon className="size-3.5 text-indigo-600" /> 결과 예시 이미지 첨부
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5 flex items-center gap-1.5">
+                <ImageIcon className="size-3.5 text-[#589960]" /> 결과 예시 이미지 첨부
               </Label>
 
               {newExampleImageUrl ? (
-                <div className="relative border border-slate-200 rounded-lg p-2 bg-slate-50 flex items-center justify-between">
+                <div className="relative border border-[#EBF1F4] rounded-xl p-2 bg-[#f7fbf8] flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <img
                       src={newExampleImageUrl}
                       alt="결과 예시 미리보기"
-                      className="h-14 w-14 object-cover rounded-md border border-slate-200 bg-white"
+                      className="h-14 w-14 object-cover rounded-md border border-[#EBF1F4] bg-white"
                     />
-                    <span className="text-xs text-slate-600 truncate max-w-[220px]">
+                    <span className="text-xs text-[#868C88] truncate max-w-[220px]">
                       {newExampleImageUrl}
                     </span>
                   </div>
@@ -356,11 +369,11 @@ function QuestionList({
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
-                  <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 transition-colors">
+                  <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 bg-[#f1f8f2] hover:bg-[#e8f5e9] border border-[#EBF1F4] rounded-xl text-xs font-medium text-[#173A23] transition-colors">
                     {uploadingImage ? (
-                      <LoaderCircleIcon className="animate-spin size-4 text-indigo-600" />
+                      <LoaderCircleIcon className="animate-spin size-4 text-[#589960]" />
                     ) : (
-                      <UploadIcon className="size-4 text-indigo-600" />
+                      <UploadIcon className="size-4 text-[#589960]" />
                     )}
                     이미지 첨부하기
                     <input
@@ -374,7 +387,7 @@ function QuestionList({
                       }}
                     />
                   </label>
-                  <span className="text-[11px] text-slate-400">
+                  <span className="text-[11px] text-[#868C88]">
                     결과 화면 스크린샷 등을 등록할 수 있습니다.
                   </span>
                 </div>
@@ -382,21 +395,21 @@ function QuestionList({
             </div>
 
             {/* 5. 배점 */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold">배점</Label>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5">배점</Label>
               <Input
                 type="number"
                 value={newScore}
                 onChange={(e) => setNewScore(e.target.value)}
-                className="w-28"
+                className={`${fieldInputClass} w-28`}
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="sm:justify-center">
             <Button
               onClick={onAdd}
               disabled={isSubmitting || uploadingImage}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+              className="bg-[#589960] hover:bg-[#173A23] text-white font-bold rounded-xl px-5 transition-colors"
             >
               {isSubmitting ? (
                 <LoaderCircleIcon className="animate-spin" />
@@ -513,7 +526,7 @@ function QuestionList({
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') e.currentTarget.blur()
                           }}
-                          className="w-14 text-center border border-slate-200 rounded px-1 py-0.5 text-xs focus:outline-none focus:border-emerald-500 font-bold"
+                          className="w-14 text-center border border-slate-200 rounded px-1 py-0.5 text-xs focus:outline-none focus:border-[#589960] focus:ring-2 focus:ring-[#A8D5B0] font-bold"
                         />
                       ) : (
                         q.score

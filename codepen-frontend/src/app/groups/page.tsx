@@ -12,7 +12,9 @@ import {
   UsersIcon,
   PlusIcon,
   LoaderCircleIcon,
-  XIcon
+  XIcon,
+  Code2Icon,
+  BookOpenIcon,
 } from 'lucide-react'
 
 import { Header } from '@/components/header'
@@ -42,6 +44,24 @@ export interface GroupItem {
   members_count?: number
   members?: Array<unknown>
   created_at: string
+  platform?: 'codepen' | 'colab' // 🟢 [추가] 그룹이 사용하는 실습 플랫폼
+}
+
+// 🟢 [추가] 플랫폼 배지 - 그룹 카드에서 한눈에 CodePen/Colab 구분
+function PlatformBadge({ platform }: { platform?: 'codepen' | 'colab' }) {
+  const isColab = platform === 'colab'
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+        isColab
+          ? 'bg-amber-50 text-amber-700 border-amber-200'
+          : 'bg-slate-50 text-slate-600 border-slate-200'
+      }`}
+    >
+      {isColab ? <BookOpenIcon className="w-3 h-3" /> : <Code2Icon className="w-3 h-3" />}
+      {isColab ? 'Colab' : 'CodePen'}
+    </span>
+  )
 }
 
 function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
@@ -49,8 +69,11 @@ function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  // 🟢 [추가] 그룹이 사용할 실습 플랫폼 선택 상태 (기본값: codepen)
+  const [platform, setPlatform] = useState<'codepen' | 'colab'>('codepen')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  // CreateGroupDialog 내부 onSubmit 함수 수정
   const onSubmit = async () => {
     if (!name.trim()) {
       toast.error('그룹 이름을 입력해주세요.')
@@ -61,15 +84,22 @@ function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
       const created = await fetcher<Group>('/api/group', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description: description || null }),
+        body: JSON.stringify({ 
+          name: name,
+          group_name: name, // 🟢 백엔드 요청 필드 일치 보장
+          description: description || null, 
+          platform 
+        }),
       })
       toast.success(`'${name}' 그룹이 개설되었습니다.`)
       setOpen(false)
       setName('')
       setDescription('')
+      setPlatform('codepen')
       onCreated()
       router.push(`/problem?groupId=${created.group_id}`)
-    } catch {
+    } catch (err) {
+      console.error('Group creation error:', err)
       toast.error('그룹 개설에 실패했습니다. 잠시 후 다시 시도해주세요.')
     } finally {
       setIsSubmitting(false)
@@ -108,6 +138,46 @@ function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
               placeholder='그룹 설명 (선택)'
               className='w-full bg-background text-foreground border-input focus-visible:ring-1 focus-visible:ring-ring focus:outline-none rounded-xl resize-none min-h-[90px] p-3.5 text-sm'
             />
+          </div>
+
+          {/* 🟢 [추가] 실습 플랫폼 선택 */}
+          <div className='flex flex-col gap-1.5'>
+            <label className='text-xs font-bold text-[#173A23] px-0.5'>
+              이 그룹에서 사용할 실습 플랫폼
+            </label>
+            <div className='grid grid-cols-2 gap-2'>
+              <button
+                type='button'
+                onClick={() => setPlatform('codepen')}
+                disabled={isSubmitting}
+                className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-colors ${
+                  platform === 'codepen'
+                    ? 'border-[#589960] bg-[#589960]/5 text-[#173A23]'
+                    : 'border-[#EBF1F4] text-[#868C88] hover:border-[#CBD9E1]'
+                }`}
+              >
+                <Code2Icon className='w-5 h-5' />
+                <span className='text-xs font-bold'>CodePen</span>
+                <span className='text-[10px] text-[#868C88]'>웹 프론트엔드 실습</span>
+              </button>
+              <button
+                type='button'
+                onClick={() => setPlatform('colab')}
+                disabled={isSubmitting}
+                className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-colors ${
+                  platform === 'colab'
+                    ? 'border-[#589960] bg-[#589960]/5 text-[#173A23]'
+                    : 'border-[#EBF1F4] text-[#868C88] hover:border-[#CBD9E1]'
+                }`}
+              >
+                <BookOpenIcon className='w-5 h-5' />
+                <span className='text-xs font-bold'>Colab</span>
+                <span className='text-[10px] text-[#868C88]'>파이썬/데이터 실습</span>
+              </button>
+            </div>
+            <p className='text-[11px] text-[#868C88] px-0.5'>
+              그룹 생성 후에는 문제가 등록되면 변경할 수 없어요. 신중하게 선택해주세요.
+            </p>
           </div>
         </div>
 
@@ -288,6 +358,8 @@ function GroupsContent() {
                           <h2 className='text-base font-bold text-[#173A23] line-clamp-1'>
                             {group.group_name}
                           </h2>
+                          {/* 🟢 [추가] 플랫폼 배지 */}
+                          <PlatformBadge platform={group.platform} />
                         </div>
 
                         <div className='flex flex-col gap-1 text-xs mb-6'>
@@ -331,6 +403,8 @@ function GroupsContent() {
                       <div className='space-y-1.5'>
                         <div className='flex items-center gap-2'>
                           <h2 className='text-base font-bold text-[#173A23]'>{group.group_name}</h2>
+                          {/* 🟢 [추가] 플랫폼 배지 */}
+                          <PlatformBadge platform={group.platform} />
                         </div>
                         <div className='flex flex-col gap-0.5 text-xs text-[#868C88]'>
                           <span className='text-[#173A23] font-medium'>👤 그룹장: {ownerName}</span>
