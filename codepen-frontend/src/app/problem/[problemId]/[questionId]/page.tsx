@@ -692,7 +692,7 @@ function QuestionDetailPageContent() {
 
       {/* 제출 확인 & 실행 결과 뷰어 모달 */}
       <Dialog open={isSubmitModalOpen} onOpenChange={setIsSubmitModalOpen}>
-        <DialogContent className="max-w-3xl bg-white rounded-2xl shadow-xl">
+        <DialogContent className="max-w-3xl sm:max-w-6xl bg-white rounded-2xl shadow-xl">
           <DialogHeader className="border-b border-slate-100 pb-4">
             <DialogTitle className="flex items-center gap-2 text-xl font-bold text-slate-800">
               <TerminalSquareIcon className="size-5 text-indigo-500" />
@@ -743,39 +743,42 @@ function QuestionDetailPageContent() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-4 animate-in fade-in duration-300">
-                <div className="flex items-center justify-between px-1">
-                  <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
-                    <PlayIcon className="size-4 text-emerald-500" /> Output (실행 결과)
-                  </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 animate-in fade-in duration-300">
+                {/* 🟢 [수정] 왼쪽: 제출될 결과 미리보기 + 경고 문구 / 오른쪽: 코드 입력 - 요청대로 좌우 배치 */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                      <PlayIcon className="size-4 text-emerald-500" /> Output (실행 결과)
+                    </h3>
+                  </div>
+
+                  <div className="w-full aspect-video bg-white rounded-xl border border-slate-200 shadow-inner overflow-hidden flex items-center justify-center">
+                    {embedUrl ? (
+                      <iframe
+                        src={embedUrl}
+                        title="Code Execution Result"
+                        className="w-full h-full border-0"
+                        sandbox="allow-scripts allow-same-origin"
+                      />
+                    ) : (
+                      <div className="text-center p-6 text-slate-400 space-y-2">
+                        <p className="text-sm font-semibold text-slate-600">유효한 CodePen 고유 URL이 필요합니다.</p>
+                        <p className="text-xs">`https://codepen.io/사용자/pen/고유ID` 형식의 링크를 입력해 주세요.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-center font-medium bg-amber-50 text-amber-600 py-2 rounded-lg">
+                    ⚠️ 오른쪽 <strong>코드 붙여넣기</strong>에 직접 입력해주세요. CodePen 자동 가져오기는 대부분 차단돼서 안정적이지 않아요.
+                  </p>
+                  <p className="text-xs text-center font-medium bg-rose-50 text-rose-600 py-2 rounded-lg">
+                    최종 제출 후에는 코드를 수정할 수 없습니다. 결과가 올바른지 확인해주세요.
+                  </p>
                 </div>
 
-                <div className="w-full aspect-video bg-white rounded-xl border border-slate-200 shadow-inner overflow-hidden flex items-center justify-center">
-                  {embedUrl ? (
-                    <iframe
-                      src={embedUrl}
-                      title="Code Execution Result"
-                      className="w-full h-full border-0"
-                      sandbox="allow-scripts allow-same-origin"
-                    />
-                  ) : (
-                    <div className="text-center p-6 text-slate-400 space-y-2">
-                      <p className="text-sm font-semibold text-slate-600">유효한 CodePen 고유 URL이 필요합니다.</p>
-                      <p className="text-xs">`https://codepen.io/사용자/pen/고유ID` 형식의 링크를 입력해 주세요.</p>
-                    </div>
-                  )}
-                </div>
-
-                <p className="text-xs text-center font-medium bg-amber-50 text-amber-600 py-2 rounded-lg">
-                  ⚠️ 아래 <strong>코드 붙여넣기</strong>에 직접 입력해주세요. CodePen 자동 가져오기는 대부분 차단돼서 안정적이지 않아요.
-                </p>
-                <p className="text-xs text-center font-medium bg-rose-50 text-rose-600 py-2 rounded-lg">
-                  최종 제출 후에는 코드를 수정할 수 없습니다. 결과가 올바른지 확인해주세요.
-                </p>
-
-                {/* 🟢 [수정] CodePen 자동 가져오기가 CORS/서버 IP 차단으로 거의 항상 실패해서,
-                    이제 이 붙여넣기 영역을 "실패 시 폴백"이 아니라 "기본 제출 방법"으로 기본 펼침 처리합니다. */}
-                <div className="border border-emerald-200 rounded-xl overflow-hidden">
+                {/* 🟢 오른쪽: 코드 붙여넣기. CodePen 자동 가져오기가 CORS/서버 IP 차단으로 거의 항상
+                    실패해서, "실패 시 폴백"이 아니라 "기본 제출 방법"으로 기본 펼침 처리합니다. */}
+                <div className="border border-emerald-200 rounded-xl overflow-hidden self-start">
                   <button
                     type="button"
                     onClick={() => setShowPasteFallback((v) => !v)}
@@ -799,35 +802,37 @@ function QuestionDetailPageContent() {
                         아래에 붙여넣어주세요. 아래 칸에 뭔가 입력되어 있으면 <strong>그 내용이 그대로 제출</strong>되고,
                         비워두면 자동 가져오기를 시도하지만 대부분의 경우 실패해요.
                       </p>
-                      <div className="space-y-1.5">
-                        <Label className="text-[11px] font-bold text-slate-600">HTML</Label>
-                        <Textarea
-                          value={pastedHtml}
-                          onChange={(e) => setPastedHtml(e.target.value)}
-                          placeholder="<div>...</div>"
-                          rows={4}
-                          className="font-mono text-[11px] resize-y"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-[11px] font-bold text-slate-600">CSS</Label>
-                        <Textarea
-                          value={pastedCss}
-                          onChange={(e) => setPastedCss(e.target.value)}
-                          placeholder="body { ... }"
-                          rows={4}
-                          className="font-mono text-[11px] resize-y"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-[11px] font-bold text-slate-600">JS</Label>
-                        <Textarea
-                          value={pastedJs}
-                          onChange={(e) => setPastedJs(e.target.value)}
-                          placeholder="console.log(...)"
-                          rows={4}
-                          className="font-mono text-[11px] resize-y"
-                        />
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px] font-bold text-slate-600">HTML</Label>
+                          <Textarea
+                            value={pastedHtml}
+                            onChange={(e) => setPastedHtml(e.target.value)}
+                            placeholder="<div>...</div>"
+                            rows={5}
+                            className="font-mono text-[11px] resize-y"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px] font-bold text-slate-600">CSS</Label>
+                          <Textarea
+                            value={pastedCss}
+                            onChange={(e) => setPastedCss(e.target.value)}
+                            placeholder="body { ... }"
+                            rows={5}
+                            className="font-mono text-[11px] resize-y"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px] font-bold text-slate-600">JS</Label>
+                          <Textarea
+                            value={pastedJs}
+                            onChange={(e) => setPastedJs(e.target.value)}
+                            placeholder="console.log(...)"
+                            rows={5}
+                            className="font-mono text-[11px] resize-y"
+                          />
+                        </div>
                       </div>
                     </div>
                   )}
