@@ -1,9 +1,9 @@
 'use client'
 
-import React, { Suspense, useState, useEffect, useCallback } from 'react'
+import React, { Suspense, useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeftIcon, RotateCwIcon, CheckIcon } from 'lucide-react'
+import { ArrowLeftIcon, RotateCwIcon, CheckIcon, TrendingUpIcon, SigmaIcon } from 'lucide-react'
 
 import { Header } from '@/components/header'
 import { GroupProvider, useGroup } from '@/context/group-provider'
@@ -263,6 +263,23 @@ function SubmissionTableContent() {
     return 'text-rose-500 font-bold'
   }
 
+  // 🟢 [수정] "학생별 총점"(calculateTotalProfScore)을 그대로 씁니다.
+  // 미채점 학생을 제외하지 않고, 0점으로 포함해서 전체 학생 기준으로 계산합니다.
+  const gradeStats = useMemo(() => {
+    const totals = students.map((s) => Number(calculateTotalProfScore(s)))
+
+    const count = totals.length
+    if (count === 0) {
+      return { average: 0, stddev: 0, count: 0 }
+    }
+
+    const average = totals.reduce((a, b) => a + b, 0) / count
+    const variance = totals.reduce((acc, v) => acc + (v - average) ** 2, 0) / count
+    const stddev = Math.sqrt(variance)
+
+    return { average, stddev, count }
+  }, [students])
+
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col">
       <Header user={me} />
@@ -312,11 +329,28 @@ function SubmissionTableContent() {
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200/80 shadow-2xs overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
-            <h2 className="font-bold text-slate-800 text-sm">채점 테이블</h2>
-            <Button variant="outline" size="sm" onClick={fetchData} className="h-8 gap-1.5 text-xs text-slate-600 bg-white">
-              <RotateCwIcon className="size-3.5" /> 새로고침
-            </Button>
+          <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white gap-4 flex-wrap">
+            <h2 className="font-bold text-slate-800 text-sm shrink-0">채점 테이블</h2>
+
+            {/* 🟢 [신규] 평균/표준편차 - 채점 테이블 헤더 바로 옆에 배지 형태로 표시 */}
+            <div className="flex items-center gap-2 flex-1 justify-end flex-wrap">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50/80 border border-indigo-100 text-indigo-700 text-xs font-bold">
+                <TrendingUpIcon className="size-3.5" />
+                평균 {gradeStats.average.toFixed(1)}
+                <span className="text-indigo-400 font-normal">/ {totalMaxScore}</span>
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-50/80 border border-violet-100 text-violet-700 text-xs font-bold">
+                <SigmaIcon className="size-3.5" />
+                표준편차 {gradeStats.stddev.toFixed(1)}
+              </div>
+              <span className="text-[11px] text-slate-400 font-medium">
+                (전체 {gradeStats.count}명 기준, 미채점 0점 포함)
+              </span>
+
+              <Button variant="outline" size="sm" onClick={fetchData} className="h-8 gap-1.5 text-xs text-slate-600 bg-white ml-1">
+                <RotateCwIcon className="size-3.5" /> 새로고침
+              </Button>
+            </div>
           </div>
 
           {isLoading ? (
