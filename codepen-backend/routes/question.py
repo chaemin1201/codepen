@@ -4,8 +4,6 @@ import io
 import zipfile
 import re
 import json
-import asyncio
-import httpx
 from utils.colab import download_colab_snapshot, get_colab_file_id
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +49,10 @@ class AttemptStats(BaseModel):
     total_graded: int
     total_correct: int
     accuracy: float | None = None
+    # 🟢 [신규] 이 소문제를 실제로 "제출한 서로 다른 학생 수" (재제출 중복 제거).
+    # total_attempts는 재제출 포함 총 시도 횟수 합계라서 교수 화면에 "학생 몇 명 제출"을
+    # 보여주는 용도로는 안 맞았습니다.
+    submitted_students: int = 0
 
 
 class MyAttempt(BaseModel):
@@ -78,48 +80,10 @@ def _compute_late_info(deadline: datetime | None, submitted_at: datetime | None)
     return True, late_minutes
 
 
-# 🟢 [수정] CodePen의 .html/.css/.js 원본 추출 URL은 "다른 Pen에서 <script src>/<link>로
-# 끌어다 쓰라고" 만든 기능이라 Access-Control-Allow-Origin 헤더를 주지 않습니다.
-# 그래서 브라우저의 fetch()로는 CORS에 막혀 절대 못 가져옵니다 (프론트에서 시도했던 방식).
-# CORS는 브라우저만 검사하는 규칙이라, 서버(백엔드)에서 요청하면 이 제약이 아예 적용되지 않습니다.
-# → 그래서 이 추출을 프론트가 아니라 여기, 백엔드에서 대신 수행합니다.
-_CODEPEN_URL_RE = re.compile(
-    r"codepen\.io/([^/]+)/(?:pen|collab|full|details)/([^/?#]+)"
-)
-
-
-async def _fetch_codepen_source(codepen_url: str) -> tuple[str, str, str]:
-    """codepen_url에서 username/penId를 뽑아 .html/.css/.js를 서버에서 직접 가져옵니다.
-    실패하면 예외를 던집니다 (호출부에서 400으로 변환해 프론트에 명확히 알림)."""
-    match = _CODEPEN_URL_RE.search(codepen_url or "")
-    if not match:
-        raise ValueError("올바른 CodePen 링크가 아닙니다.")
-
-    username, pen_id = match.group(1), match.group(2)
-    base = f"https://codepen.io/{username}/pen/{pen_id}"
-
-    # 일부 사이트가 브라우저가 아닌 요청(빈 User-Agent 등)을 차단하는 경우가 있어
-    # 일반 브라우저처럼 보이는 헤더를 붙여서 요청합니다.
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-    }
-
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        html_res, css_res, js_res = await asyncio.gather(
-            client.get(f"{base}.html", headers=headers),
-            client.get(f"{base}.css", headers=headers),
-            client.get(f"{base}.js", headers=headers),
-        )
-
-    for res, label in ((html_res, "HTML"), (css_res, "CSS"), (js_res, "JS")):
-        if res is None or res.status_code >= 400:
-            status = res.status_code if res is not None else "요청 실패"
-            raise ValueError(f"CodePen에서 {label} 코드를 가져오지 못했습니다 (status={status}).")
-
-    return html_res.text, css_res.text, js_res.text
+# 🟢 [수정] CodePen 연동을 완전히 제거하면서 여기 있던 _fetch_codepen_source() /
+# _CODEPEN_URL_RE (CORS 우회를 위해 서버가 CodePen을 대신 긁어오던 헬퍼)도 함께
+# 삭제했습니다. 이제 "자체 에디터" 플랫폼은 프론트가 보낸 html/css/js를 그대로 쓰므로
+# 외부 사이트에서 코드를 가져오는 과정 자체가 필요 없습니다.
 
 
 class QuestionResponse(BaseModel):
@@ -147,7 +111,9 @@ class GradeAttempt(BaseModel):
 
 # 🟢 [수정] 프론트엔드에서 HTML, CSS, JS 코드를 직접 받을 수 있도록 필드 추가
 class SubmitQuestionBody(BaseModel):
-    codepen_url: str
+    # 🟢 [수정] CodePen이 제거되어 "자체 에디터" 플랫폼에선 아예 안 쓰입니다. Colab일 때만
+    # 노트북 공유 링크로 사용됩니다.
+    codepen_url: str | None = None
     html: str | None = ""
     css: str | None = ""
     js: str | None = ""
@@ -165,6 +131,8 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
     graded = [a for a in attempts if a.is_correct is not None]
     correct = [a for a in graded if a.is_correct]
     accuracy = (len(correct) / len(graded) * 100) if graded else None
+    # 🟢 [신규] 재제출 중복 없이, 실제로 제출한(attempts_count > 0) 서로 다른 학생 수
+    submitted_students = len({a.user_id for a in attempts if a.attempts_count > 0})
 
     mine = next((a for a in attempts if a.user_id == current_user_id), None)
     last_submitted_at = getattr(mine, "updated_at", None) if mine else None
@@ -201,6 +169,7 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
             total_graded=len(graded),
             total_correct=len(correct),
             accuracy=accuracy,
+            submitted_students=submitted_students,
         ),
         my_attempt=MyAttempt(
             attempts_count=mine.attempts_count if mine else (1 if last_submitted_at else 0),
@@ -868,29 +837,17 @@ async def submit_question(
 
         platform = getattr(group, "platform", "codepen")
 
-        # 🟢 [수정] CodePen 서버가 봇 차단(403)으로 우리 서버의 자동 요청까지 막고 있어서,
-        # "자동으로 긁어오기"는 더 이상 신뢰할 수 없습니다. 그래서 우선순위를 바꿨습니다:
-        #   1순위: 프론트가 학생이 직접 붙여넣은 html/css/js를 보냈다면 그걸 그대로 사용 (가장 확실함)
-        #   2순위: 붙여넣은 게 없으면 예전처럼 서버가 자동으로 가져오기를 "시도"는 해봄 (되면 편함)
-        #          — 이것도 실패하면 그때 400으로 "직접 붙여넣어주세요"라고 안내
+        # 🟢 [수정] CodePen을 완전히 제거했습니다. 이제 플랫폼은 "colab" 아니면 그 외 전부
+        # "자체 에디터"(과거 'codepen' 문자열을 그대로 쓰지만 의미가 바뀜)입니다. 자체 에디터는
+        # 프론트가 이 페이지 안에서 작성한 html/css/js를 그대로 보내므로, 외부 사이트에서
+        # 긁어올 필요 자체가 없어 CORS/봇차단 문제가 구조적으로 존재하지 않습니다.
         fetched_html, fetched_css, fetched_js = "", "", ""
-        has_pasted_code = bool((body.html or "").strip() or (body.css or "").strip() or (body.js or "").strip())
 
         if platform != "colab":
-            if has_pasted_code:
-                fetched_html, fetched_css, fetched_js = body.html or "", body.css or "", body.js or ""
-            else:
-                try:
-                    fetched_html, fetched_css, fetched_js = await _fetch_codepen_source(body.codepen_url)
-                except Exception as e:
-                    response.status_code = 400
-                    return {
-                        "error": (
-                            "CodePen에서 코드를 자동으로 가져오지 못했습니다 (CodePen의 봇 차단으로 "
-                            "서버 요청도 막혔을 수 있어요). 아래 '코드 직접 붙여넣기'에 HTML/CSS/JS를 "
-                            f"붙여넣은 후 다시 제출해주세요. ({e})"
-                        )
-                    }
+            fetched_html, fetched_css, fetched_js = body.html or "", body.css or "", body.js or ""
+            if not fetched_html.strip() and not fetched_css.strip() and not fetched_js.strip():
+                response.status_code = 400
+                return {"error": "제출할 코드가 비어 있습니다. HTML/CSS/JS 중 하나 이상 작성해주세요."}
 
         # 🟢 [수정] 순서를 바꿨습니다. 예전에는 QuestionAttempt(제출 횟수/시각)를 먼저 저장하고
         # '그 다음에' 파일 업로드를 시도했습니다. 그러면 업로드가 실패해도(GOOGLE_DRIVE_API_KEY
@@ -930,7 +887,7 @@ async def submit_question(
                     file=zip_buffer.getvalue(),
                     file_options={"content-type": "application/zip", "upsert": "true"}
                 )
-                print(f"✅ [CodePen Snapshot] {'붙여넣은' if has_pasted_code else '서버에서 자동으로 가져온'} 코드로 ZIP 저장 완료: {file_key}")
+                print(f"✅ [Snapshot] 학생이 작성한 코드로 ZIP 저장 완료: {file_key}")
         except Exception as e:
             # 🟢 [수정] 파일 저장이 실패하면 여기서 끝냅니다. QuestionAttempt는 아직 손대지
             # 않았으니(아래에서 저장 성공 후에만 기록), "제출 기록만 남고 파일은 없는" 상태가

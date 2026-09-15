@@ -9,7 +9,6 @@ import {
   LoaderCircleIcon,
   CheckCircle2Icon,
   EditIcon,
-  Code2Icon,
   BookOpenIcon,
   FileTextIcon,
   TerminalSquareIcon,
@@ -22,9 +21,7 @@ import {
   ImageIcon,
   UploadIcon,
   AlertTriangleIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  ClipboardPasteIcon,
+  SquareCodeIcon,
 } from 'lucide-react'
 
 import { Header } from '@/components/header'
@@ -254,7 +251,9 @@ function QuestionDetailPageContent() {
   const { categories } = useCategories(group?.group_id ?? null)
   const isOwner = useGroupOwner()
 
-  // 🟢 그룹의 실습 플랫폼
+  // 🟢 [수정] CodePen 완전히 제거. 이제 플랫폼은 Colab, 아니면 기본값인 "자체 에디터"
+  // 두 가지뿐입니다. platform 값 자체는 DB 마이그레이션 없이 그대로 'codepen' 문자열을
+  // 쓰지만, 의미상으로는 "자체 에디터"입니다.
   const platform: 'codepen' | 'colab' = (group as any)?.platform === 'colab' ? 'colab' : 'codepen'
   const isColab = platform === 'colab'
 
@@ -263,24 +262,23 @@ function QuestionDetailPageContent() {
 
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false)
   const [isExecuting, setIsExecuting] = useState(false)
+  // 🟢 Colab 전용 - 제출할 Colab 노트북 링크
   const [userSubmitUrl, setUserSubmitUrl] = useState<string>('')
 
-  // 🟢 [신규] CodePen 자동 가져오기가 봇 차단(CORS/403)으로 실패할 수 있어서,
-  // 학생이 직접 코드를 붙여넣을 수 있는 폴백 UI용 상태입니다.
-  // 🟢 [수정] CodePen 자동 가져오기가 CORS/서버 IP 차단으로 거의 항상 실패하는 게 확인되어,
-  // 이제 "실패하면 열리는 폴백"이 아니라 "기본으로 펼쳐진 주된 제출 방법"으로 바꿉니다.
-  const [showPasteFallback, setShowPasteFallback] = useState(true)
-  const [pastedHtml, setPastedHtml] = useState('')
-  const [pastedCss, setPastedCss] = useState('')
-  const [pastedJs, setPastedJs] = useState('')
+  // 🟢 자체 에디터 상태 - 학생이 이 페이지 안에서 바로 작성하는 코드
+  const [editorHtml, setEditorHtml] = useState('')
+  const [editorCss, setEditorCss] = useState('')
+  const [editorJs, setEditorJs] = useState('')
+  // 🟢 [신규] HTML/CSS/JS를 한 번에 다 보여주면 세로로 너무 길어져서, 탭으로 하나씩만 보여줍니다.
+  const [activeEditorTab, setActiveEditorTab] = useState<'html' | 'css' | 'js'>('html')
 
   const { data: question, isLoading, error, mutate } = useQuery<Question & { condition?: string; conditions?: string; example_image_url?: string; codepen_url?: string }>(
     `/api/question/${questionId}`
   )
 
   useEffect(() => {
-    if (questionId) {
-      // 🟢 플랫폼별로 로컬 임시저장 키를 분리 (그룹 전환 시 잘못된 값이 섞이지 않게)
+    // 🟢 Colab 링크 임시저장/복원 (자체 에디터는 링크가 없으니 해당 없음)
+    if (questionId && isColab) {
       const savedUrl = localStorage.getItem(`${platform}_url_q_${questionId}`)
       if (savedUrl) {
         setUserSubmitUrl(savedUrl)
@@ -288,7 +286,91 @@ function QuestionDetailPageContent() {
         setUserSubmitUrl(question.codepen_url)
       }
     }
-  }, [questionId, question, platform])
+  }, [questionId, question, platform, isColab])
+
+  // 🟢 [수정] 자체 에디터 코드 복원 - 우선순위 2단계
+  //   1순위: 로컬 임시저장본 (작성하다가 중간에 나간 경우 - 새로고침해도 안 날아가게)
+  //   2순위: 로컬 임시저장본이 없으면(예: 이미 제출 완료해서 지워진 상태) 서버에 저장된
+  //          "가장 최근 제출 내용"을 불러와서, 제출 후 다시 들어와도 빈 화면이 아니라
+  //          직전에 낸 코드를 보고 수정한 뒤 재제출할 수 있게 합니다.
+  useEffect(() => {
+    if (isColab || !questionId || !me?.user_id) return
+
+    const savedHtml = localStorage.getItem(`editor_html_q_${questionId}`)
+    const savedCss = localStorage.getItem(`editor_css_q_${questionId}`)
+    const savedJs = localStorage.getItem(`editor_js_q_${questionId}`)
+
+    if (savedHtml !== null || savedCss !== null || savedJs !== null) {
+      if (savedHtml !== null) setEditorHtml(savedHtml)
+      if (savedCss !== null) setEditorCss(savedCss)
+      if (savedJs !== null) setEditorJs(savedJs)
+      return
+    }
+
+    const fetchPreviousSubmissionFile = async (filename: string): Promise<string> => {
+      try {
+        const res = await fetch(`/api/question/${questionId}/attempt/${me.user_id}/codepen_code/${filename}`)
+        if (res.ok) return await res.text()
+      } catch (e) {
+        console.warn(`이전 제출 파일(${filename}) 로드 실패:`, e)
+      }
+      return ''
+    }
+
+    ;(async () => {
+      const [html, css, js] = await Promise.all([
+        fetchPreviousSubmissionFile('index.html'),
+        fetchPreviousSubmissionFile('style.css'),
+        fetchPreviousSubmissionFile('script.js'),
+      ])
+      if (html || css || js) {
+        setEditorHtml(html)
+        setEditorCss(css)
+        setEditorJs(js)
+      }
+    })()
+  }, [isColab, questionId, me?.user_id])
+
+  const handleEditorChange = (field: 'html' | 'css' | 'js', value: string) => {
+    if (field === 'html') setEditorHtml(value)
+    if (field === 'css') setEditorCss(value)
+    if (field === 'js') setEditorJs(value)
+    localStorage.setItem(`editor_${field}_q_${questionId}`, value)
+  }
+
+  // 🟢 [신규] 에디터에서 흔히 쓰는 Emmet 단축키 흉내: HTML 칸에 "!"만 입력한 채
+  // Tab을 누르면 기본 HTML5 뼈대로 바꿔줍니다.
+  const HTML_BOILERPLATE = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+
+</body>
+</html>`
+
+  const handleHtmlEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab' && e.currentTarget.value.trim() === '!') {
+      e.preventDefault()
+      handleEditorChange('html', HTML_BOILERPLATE)
+    }
+  }
+
+  // 🟢 자체 에디터 라이브 미리보기 문서
+  const editorPreviewDoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>${editorCss}</style>
+</head>
+<body>
+${editorHtml}
+<script>${editorJs}<\/script>
+</body>
+</html>`
 
   const handleSubmitUrlChange = (url: string) => {
     setUserSubmitUrl(url)
@@ -337,76 +419,75 @@ function QuestionDetailPageContent() {
     )
   }
 
-  // 🟢 플랫폼별 기본 링크
-  const baseSubmitUrl = question.codepen_url || (isColab ? 'https://colab.research.google.com/#create=true' : 'https://codepen.io/pen')
+  // 🟢 Colab 기본 링크 (자체 에디터는 링크가 필요 없어서 해당 없음)
+  const baseSubmitUrl = question.codepen_url || 'https://colab.research.google.com/#create=true'
   const activeSubmitUrl = userSubmitUrl.trim() || baseSubmitUrl
-
-  const getCodePenEmbedUrl = (url: string) => {
-    if (!url || url.includes('codepen.io/pen')) return null
-    const match = url.match(/codepen\.io\/([^/]+)\/(?:pen|full|details)\/([^/?#]+)/)
-    if (match) {
-      const [, user, penId] = match
-      return `https://codepen.io/${user}/embed/${penId}?default-tab=result`
-    }
-    if (url.includes('/embed/')) return url
-    return null
-  }
 
   // 🟢 Colab은 구글이 iframe 삽입을 막아둬서 라이브 미리보기가 불가능함.
   // 대신 "유효한 링크 형식인지"만 검증하고, 실제 확인은 새 탭에서 하도록 안내.
   const isColabUrlValid = isColab ? isValidColabUrl(activeSubmitUrl) : true
-  const embedUrl = isColab ? null : getCodePenEmbedUrl(activeSubmitUrl)
 
   const handleInitialSubmit = () => {
-    if (!userSubmitUrl.trim() || userSubmitUrl === baseSubmitUrl) {
-      return toast.error(`본인의 ${isColab ? 'Colab' : 'CodePen'} 제출 링크(URL)를 입력해 주세요.`)
+    if (isColab) {
+      if (!userSubmitUrl.trim() || userSubmitUrl === baseSubmitUrl) {
+        return toast.error('본인의 Colab 제출 링크(URL)를 입력해 주세요.')
+      }
+      if (!isValidColabUrl(userSubmitUrl)) {
+        return toast.error("유효하지 않은 Colab 링크입니다. 'https://colab.research.google.com/drive/...' 형식이어야 합니다.")
+      }
+      setIsSubmitModalOpen(true)
+      setIsExecuting(true)
+      setTimeout(() => {
+        setIsExecuting(false)
+      }, 1200)
+      return
     }
-    if (isColab && !isValidColabUrl(userSubmitUrl)) {
-      return toast.error("유효하지 않은 Colab 링크입니다. 'https://colab.research.google.com/drive/...' 형식이어야 합니다.")
+
+    // 🟢 자체 에디터는 URL이 아니라 실제로 작성한 코드가 있는지만 확인
+    if (!editorHtml.trim() && !editorCss.trim() && !editorJs.trim()) {
+      return toast.error('제출할 코드를 작성해 주세요 (HTML/CSS/JS 중 하나 이상).')
     }
     setIsSubmitModalOpen(true)
-    setIsExecuting(true)
-    setTimeout(() => {
-      setIsExecuting(false)
-    }, 1200)
   }
 
-  // 🟢 [수정] CodePen의 .html/.css/.js는 브라우저에서 fetch()로 절대 가져올 수 없습니다
-  // (CodePen이 CORS 허용 헤더를 주지 않음 - <script src>/<link> 태그 전용으로 설계된 기능이라
-  // 그렇습니다). 그래서 더 이상 프론트에서 코드를 긁어오려고 시도하지 않고, codepen_url만
-  // 백엔드로 보내면 백엔드가 서버 대 서버로 직접 가져옵니다(CORS는 브라우저만 검사하는 규칙이라
-  // 서버끼리 통신할 때는 적용되지 않습니다).
+  // 🟢 [수정] CodePen 의존성을 완전히 제거했습니다. 이제 "자체 에디터"에서 학생이 작성한
+  // html/css/js를 곧바로 서버로 보내고, 서버는 그걸 그대로 zip으로 묶어 저장합니다.
+  // 외부 사이트 CORS/봇차단 문제 자체가 더 이상 존재하지 않는 구조입니다.
   const handleFinalSubmit = async () => {
     try {
       setIsExecuting(true)
 
-      // 백엔드로 codepen_url과 (있다면) 직접 붙여넣은 코드를 함께 전송
       const res = await fetch(`/api/question/${questionId}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question_id: questionId,
-          codepen_url: activeSubmitUrl,
-          html: pastedHtml,
-          css: pastedCss,
-          js: pastedJs,
-        }),
+        body: JSON.stringify(
+          isColab
+            ? {
+                question_id: questionId,
+                codepen_url: activeSubmitUrl,
+              }
+            : {
+                question_id: questionId,
+                html: editorHtml,
+                css: editorCss,
+                js: editorJs,
+              }
+        ),
       })
 
       const submitData = await res.json().catch(() => ({} as any))
 
       if (!res.ok) {
-        // 서버가 CodePen에서 코드를 가져오는 데 실패한 경우(봇 차단/CORS/비공개 pen 등)
-        // 여기서 바로 에러로 알려주고, 직접 붙여넣기 폴백을 자동으로 펼쳐줍니다.
-        setShowPasteFallback(true)
         throw new Error(submitData.error || submitData.message || '제출 처리 실패')
       }
 
-      localStorage.removeItem(`${platform}_url_q_${questionId}`)
-      setPastedHtml('')
-      setPastedCss('')
-      setPastedJs('')
-      setShowPasteFallback(false)
+      if (isColab) {
+        localStorage.removeItem(`${platform}_url_q_${questionId}`)
+      } else {
+        localStorage.removeItem(`editor_html_q_${questionId}`)
+        localStorage.removeItem(`editor_css_q_${questionId}`)
+        localStorage.removeItem(`editor_js_q_${questionId}`)
+      }
 
       // 🟢 지각 여부는 브라우저 로컬 시계 대신, /submit 응답에 서버가 내려주는
       // is_late / late_by_minutes를 우선 사용 (클라이언트 시계 조작/오차에 안전)
@@ -485,13 +566,13 @@ function QuestionDetailPageContent() {
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto p-6 space-y-6">
+      <div className="w-full px-6 py-6 space-y-6">
         <div className="flex items-center justify-end gap-2">
           <span className={`px-3 py-1 text-xs font-bold rounded-full shadow-2xs border flex items-center gap-1.5 ${
-            isColab ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-600 border-slate-200'
+            isColab ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
           }`}>
-            {isColab ? <BookOpenIcon className="size-3.5" /> : <Code2Icon className="size-3.5" />}
-            {isColab ? 'Colab' : 'CodePen'}
+            {isColab ? <BookOpenIcon className="size-3.5" /> : <SquareCodeIcon className="size-3.5" />}
+            {isColab ? 'Colab' : 'codepen'}
           </span>
           <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full shadow-2xs border border-indigo-100">
             배점: {question.score}점
@@ -509,138 +590,211 @@ function QuestionDetailPageContent() {
             onCancel={() => setIsEditing(false)}
           />
         ) : (
-          /* 메인 문제 내용 영역 */
-          <div className="bg-white border border-slate-100 rounded-xl p-6 shadow-2xs space-y-6">
-            <h1 className="text-2xl font-bold text-slate-900">{question.title}</h1>
+          /* 🟢 [수정] 왼쪽:오른쪽 비율을 1:1 → 3:7로 변경 (코드 작성/결과에 더 넓은 공간) */
+          <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 items-start">
+            {/* 왼쪽: 문제 정보 (10칸 중 3칸) */}
+            <div className="lg:col-span-3 bg-white border border-slate-100 rounded-xl p-6 shadow-2xs space-y-6">
+              <h1 className="text-2xl font-bold text-slate-900">{question.title}</h1>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 space-y-2">
-                <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">문제 설명</h4>
-                <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
-                  {question.description || '상세 문제 설명이 없습니다.'}
-                </p>
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 space-y-2">
+                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">문제 설명</h4>
+                  <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
+                    {question.description || '상세 문제 설명이 없습니다.'}
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 space-y-2">
+                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">조건</h4>
+                  <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
+                    {currentConditionText}
+                  </p>
+                </div>
               </div>
-              <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 space-y-2">
-                <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">조건</h4>
-                <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
-                  {currentConditionText}
-                </p>
-              </div>
-            </div>
 
-            {/* 🟢 텍스트 + 이미지가 합쳐진 단일 결과 예시 블록 */}
-            {(question.example_output || question.example_image_url) && (
+              {/* 🟢 텍스트 + 이미지가 합쳐진 단일 결과 예시 블록 */}
+              {(question.example_output || question.example_image_url) && (
+                <div className="space-y-1.5">
+                  <h3 className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+                    <ImageIcon className="size-3.5 text-indigo-600" /> 결과 예시
+                  </h3>
+
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                    {/* 1. 텍스트 예시 */}
+                    {question.example_output && (
+                      <pre className="text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed">
+                        {question.example_output}
+                      </pre>
+                    )}
+
+                    {/* 2. 경계선 (텍스트와 이미지가 모두 있을 때 노출) */}
+                    {question.example_output && question.example_image_url && (
+                      <div className="border-t border-slate-200 my-2" />
+                    )}
+
+                    {/* 3. 이미지 예시 */}
+                    {question.example_image_url && (
+                      <div>
+                        <img
+                          src={question.example_image_url}
+                          alt="결과 예시 이미지"
+                          className="max-h-96 w-auto object-contain rounded-lg border border-slate-200 bg-white"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 첨부파일 영역 */}
               <div className="space-y-1.5">
-                <h3 className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
-                  <ImageIcon className="size-3.5 text-indigo-600" /> 결과 예시
+                <h3 className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                  <PaperclipIcon className="size-3.5 text-emerald-600" /> 첨부파일
                 </h3>
-
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                  {/* 1. 텍스트 예시 */}
-                  {question.example_output && (
-                    <pre className="text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed">
-                      {question.example_output}
-                    </pre>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
+                  {question.attachment_name ? (
+                    <div className="flex items-center gap-2">
+                      <PaperclipIcon className="size-4 text-emerald-600" />
+                      <a
+                        href={`/uploads/questions/${question.question_id}_${question.attachment_name}`}
+                        download={question.attachment_name}
+                        className="text-xs font-medium text-slate-800 hover:underline"
+                      >
+                        {question.attachment_name}
+                      </a>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-slate-400">등록된 첨부파일이 없습니다.</span>
                   )}
 
-                  {/* 2. 경계선 (텍스트와 이미지가 모두 있을 때 노출) */}
-                  {question.example_output && question.example_image_url && (
-                    <div className="border-t border-slate-200 my-2" />
-                  )}
-
-                  {/* 3. 이미지 예시 */}
-                  {question.example_image_url && (
-                    <div>
-                      <img
-                        src={question.example_image_url}
-                        alt="결과 예시 이미지"
-                        className="max-h-96 w-auto object-contain rounded-lg border border-slate-200 bg-white"
-                      />
+                  {isOwner && (
+                    <div className="flex items-center gap-2">
+                      <label className="cursor-pointer inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                        <PencilIcon className="size-3" /> {question.attachment_name ? '변경' : '업로드'}
+                        <input
+                          type="file"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            if (file) onFileUpload(file)
+                          }}
+                        />
+                      </label>
+                      {question.attachment_name && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={onFileDelete}
+                          className="h-7 px-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
+                          title="파일 삭제"
+                        >
+                          <Trash2Icon className="size-3.5" />
+                        </Button>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
-            )}
-
-            {/* 첨부파일 영역 */}
-            <div className="space-y-1.5">
-              <h3 className="text-xs font-bold text-slate-500 flex items-center gap-1">
-                <PaperclipIcon className="size-3.5 text-emerald-600" /> 첨부파일
-              </h3>
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
-                {question.attachment_name ? (
-                  <div className="flex items-center gap-2">
-                    <PaperclipIcon className="size-4 text-emerald-600" />
-                    <a
-                      href={`/uploads/questions/${question.question_id}_${question.attachment_name}`}
-                      download={question.attachment_name}
-                      className="text-xs font-medium text-slate-800 hover:underline"
-                    >
-                      {question.attachment_name}
-                    </a>
-                  </div>
-                ) : (
-                  <span className="text-xs text-slate-400">등록된 첨부파일이 없습니다.</span>
-                )}
-
-                {isOwner && (
-                  <div className="flex items-center gap-2">
-                    <label className="cursor-pointer inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-                      <PencilIcon className="size-3" /> {question.attachment_name ? '변경' : '업로드'}
-                      <input
-                        type="file"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0]
-                          if (file) onFileUpload(file)
-                        }}
-                      />
-                    </label>
-                    {question.attachment_name && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onFileDelete}
-                        className="h-7 px-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
-                        title="파일 삭제"
-                      >
-                        <Trash2Icon className="size-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </div>
             </div>
 
-            {/* 🟢 플랫폼에 따라 CodePen/Colab URL 입력창 분기 */}
-            <div className={`p-4 rounded-xl space-y-2 border ${
-              isColab ? 'bg-amber-50/50 border-amber-100' : 'bg-indigo-50/50 border-indigo-100'
-            }`}>
-              <Label className={`text-xs font-bold flex items-center gap-1.5 ${isColab ? 'text-amber-900' : 'text-indigo-900'}`}>
-                {isColab ? (
-                  <BookOpenIcon className="size-4 text-amber-600" />
-                ) : (
-                  <Code2Icon className="size-4 text-indigo-600" />
-                )}
-                제출할 {isColab ? 'Colab' : 'CodePen'} URL 입력
-              </Label>
-              <Input
-                type="url"
-                placeholder={isColab
-                  ? '예: https://colab.research.google.com/drive/xxxxxxxxxxxx'
-                  : '예: https://codepen.io/your-username/pen/xxxxxx'}
-                value={userSubmitUrl}
-                onChange={(e) => handleSubmitUrlChange(e.target.value)}
-                className="bg-white text-xs font-mono"
-              />
-              {isColab ? (
-                <p className="text-[11px] text-slate-500">
-                  Colab에서 파일 → 공유 → <b>"링크가 있는 모든 사용자"</b>로 공유 설정 후, 주소창의 URL을 복사해서 붙여넣어 주세요. (입력 시 자동 임시 저장됩니다)
-                </p>
+            {/* 오른쪽: 코드 작성 + 결과 (10칸 중 7칸) - Colab이면 URL 입력창, 아니면(기본값) 자체 에디터 */}
+            <div className="lg:col-span-7 lg:sticky lg:top-6">
+              {!isColab ? (
+                // 🟢 [수정] 화면 안에 편집창+미리보기가 다 들어오도록 고정 높이(뷰포트 기준) +
+                // flex-col로 재구성. 입력칸은 남는 공간을 다 채우고(flex-1), 그 높이를 넘는
+                // 코드는 페이지 전체가 늘어나는 대신 입력칸 안에서만 스크롤됩니다.
+                <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-2xs flex flex-col gap-3 lg:h-[calc(100vh-19rem)]">
+                  <Label className="text-xs font-bold flex items-center gap-1.5 text-emerald-700 shrink-0">
+                    <SquareCodeIcon className="size-4 text-emerald-600" />
+                    여기서 바로 HTML/CSS/JS를 작성하세요
+                  </Label>
+
+                  {/* 🟢 [수정] 위아래 대신 좌우로: 왼쪽 코드 입력 / 오른쪽 실시간 미리보기 */}
+                  <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* 왼쪽: 탭 + 코드 입력 */}
+                    <div className="flex flex-col min-h-0">
+                      <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit shrink-0 mb-2">
+                        {(['html', 'css', 'js'] as const).map((tab) => (
+                          <button
+                            key={tab}
+                            type="button"
+                            onClick={() => setActiveEditorTab(tab)}
+                            className={`px-4 py-1.5 text-xs font-bold rounded-md uppercase transition-colors ${
+                              activeEditorTab === tab
+                                ? 'bg-emerald-600 text-white shadow-sm'
+                                : 'text-slate-500 hover:text-slate-700'
+                            }`}
+                          >
+                            {tab}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex-1 min-h-0">
+                        {activeEditorTab === 'html' && (
+                          <Textarea
+                            value={editorHtml}
+                            onChange={(e) => handleEditorChange('html', e.target.value)}
+                            onKeyDown={handleHtmlEditorKeyDown}
+                            placeholder="! 입력 후 Tab을 누르면 기본 HTML 틀이 채워져요"
+                            className="font-mono text-xs bg-white resize-none h-full w-full overflow-y-auto"
+                          />
+                        )}
+                        {activeEditorTab === 'css' && (
+                          <Textarea
+                            value={editorCss}
+                            onChange={(e) => handleEditorChange('css', e.target.value)}
+                            placeholder="div { color: red; }"
+                            className="font-mono text-xs bg-white resize-none h-full w-full overflow-y-auto"
+                          />
+                        )}
+                        {activeEditorTab === 'js' && (
+                          <Textarea
+                            value={editorJs}
+                            onChange={(e) => handleEditorChange('js', e.target.value)}
+                            placeholder="console.log('hi')"
+                            className="font-mono text-xs bg-white resize-none h-full w-full overflow-y-auto"
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 오른쪽: 실시간 미리보기 */}
+                    <div className="flex flex-col min-h-0">
+                      <Label className="text-[11px] font-bold text-slate-500 flex items-center gap-1 shrink-0 mb-2 h-[30px]">
+                        <PlayIcon className="size-3 text-emerald-600" /> 실시간 미리보기
+                      </Label>
+                      <div className="flex-1 min-h-0 rounded-lg border border-slate-200 bg-white overflow-hidden">
+                        <iframe
+                          srcDoc={editorPreviewDoc}
+                          title="Live Preview"
+                          className="w-full h-full border-0"
+                          sandbox="allow-scripts"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 shrink-0">
+                    입력하는 대로 자동으로 임시 저장돼요. 미리보기가 실제 제출될 결과와 동일합니다.
+                  </p>
+                </div>
               ) : (
-                <p className="text-[11px] text-slate-500">
-                  CodePen에서 코드를 작성 후 Save를 누르고, 브라우저 주소창의 URL을 복사해서 붙여넣어 주세요. (입력 시 자동 임시 저장됩니다)
-                </p>
+                <div className="p-4 rounded-xl space-y-2 border bg-amber-50/50 border-amber-100">
+                  <Label className="text-xs font-bold flex items-center gap-1.5 text-amber-900">
+                    <BookOpenIcon className="size-4 text-amber-600" />
+                    제출할 Colab URL 입력
+                  </Label>
+                  <Input
+                    type="url"
+                    placeholder="예: https://colab.research.google.com/drive/xxxxxxxxxxxx"
+                    value={userSubmitUrl}
+                    onChange={(e) => handleSubmitUrlChange(e.target.value)}
+                    className="bg-white text-xs font-mono"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Colab에서 파일 → 공유 → <b>"링크가 있는 모든 사용자"</b>로 공유 설정 후, 주소창의 URL을 복사해서 붙여넣어 주세요. (입력 시 자동 임시 저장됩니다)
+                  </p>
+                </div>
               )}
             </div>
           </div>
@@ -662,13 +816,16 @@ function QuestionDetailPageContent() {
               </div>
 
               <div className="flex items-center gap-3">
-                <a href={baseSubmitUrl} target="_blank" rel="noopener noreferrer">
-                  <Button variant="outline" className="text-xs font-semibold gap-2 shadow-2xs">
-                    {isColab ? <BookOpenIcon className="size-4" /> : <Code2Icon className="size-4" />}
-                    {isColab ? 'Colab' : 'CodePen'}으로 이동하여 풀기
-                    <ExternalLinkIcon className="size-3 opacity-60" />
-                  </Button>
-                </a>
+                {/* 🟢 [수정] 자체 에디터는 외부 사이트로 나갈 필요가 없어서 버튼 자체를 숨김. Colab만 남음 */}
+                {isColab && (
+                  <a href={baseSubmitUrl} target="_blank" rel="noopener noreferrer">
+                    <Button variant="outline" className="text-xs font-semibold gap-2 shadow-2xs">
+                      <BookOpenIcon className="size-4" />
+                      Colab으로 이동하여 풀기
+                      <ExternalLinkIcon className="size-3 opacity-60" />
+                    </Button>
+                  </a>
+                )}
 
                 <Button
                   className="bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold gap-2 shadow-2xs text-white disabled:opacity-50 disabled:hover:bg-emerald-600"
@@ -742,103 +899,28 @@ function QuestionDetailPageContent() {
                   최종 제출 후에는 코드를 수정할 수 없습니다. 결과가 올바른지 확인해주세요.
                 </p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 animate-in fade-in duration-300">
-                {/* 🟢 [수정] 왼쪽: 제출될 결과 미리보기 + 경고 문구 / 오른쪽: 코드 입력 - 요청대로 좌우 배치 */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between px-1">
-                    <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
-                      <PlayIcon className="size-4 text-emerald-500" /> Output (실행 결과)
-                    </h3>
-                  </div>
-
-                  <div className="w-full aspect-video bg-white rounded-xl border border-slate-200 shadow-inner overflow-hidden flex items-center justify-center">
-                    {embedUrl ? (
-                      <iframe
-                        src={embedUrl}
-                        title="Code Execution Result"
-                        className="w-full h-full border-0"
-                        sandbox="allow-scripts allow-same-origin"
-                      />
-                    ) : (
-                      <div className="text-center p-6 text-slate-400 space-y-2">
-                        <p className="text-sm font-semibold text-slate-600">유효한 CodePen 고유 URL이 필요합니다.</p>
-                        <p className="text-xs">`https://codepen.io/사용자/pen/고유ID` 형식의 링크를 입력해 주세요.</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <p className="text-xs text-center font-medium bg-amber-50 text-amber-600 py-2 rounded-lg">
-                    ⚠️ 오른쪽 <strong>코드 붙여넣기</strong>에 직접 입력해주세요. CodePen 자동 가져오기는 대부분 차단돼서 안정적이지 않아요.
-                  </p>
-                  <p className="text-xs text-center font-medium bg-rose-50 text-rose-600 py-2 rounded-lg">
-                    최종 제출 후에는 코드를 수정할 수 없습니다. 결과가 올바른지 확인해주세요.
-                  </p>
+            ) : !isColab ? (
+              // 🟢 [신규] 자체 에디터 전용 확인 화면 - 이미 메인 페이지에서 작성한 코드를
+              // 그대로 다시 렌더링해서 "이게 최종 제출될 결과가 맞는지" 확인만 시킵니다.
+              <div className="space-y-4 animate-in fade-in duration-300">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                    <PlayIcon className="size-4 text-emerald-500" /> Output (최종 제출될 결과)
+                  </h3>
                 </div>
-
-                {/* 🟢 오른쪽: 코드 붙여넣기. CodePen 자동 가져오기가 CORS/서버 IP 차단으로 거의 항상
-                    실패해서, "실패 시 폴백"이 아니라 "기본 제출 방법"으로 기본 펼침 처리합니다. */}
-                <div className="border border-emerald-200 rounded-xl overflow-hidden self-start">
-                  <button
-                    type="button"
-                    onClick={() => setShowPasteFallback((v) => !v)}
-                    className="w-full flex items-center justify-between px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 transition-colors text-xs font-bold text-emerald-700"
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <ClipboardPasteIcon className="size-3.5" />
-                      코드 붙여넣기 (권장 · CodePen 자동 가져오기는 대부분 차단돼요)
-                    </span>
-                    {showPasteFallback ? (
-                      <ChevronUpIcon className="size-3.5" />
-                    ) : (
-                      <ChevronDownIcon className="size-3.5" />
-                    )}
-                  </button>
-
-                  {showPasteFallback && (
-                    <div className="p-3.5 space-y-3 bg-white">
-                      <p className="text-[11px] text-slate-500">
-                        CodePen 각 패널(HTML/CSS/JS) 안을 클릭 → 전체 선택(Ctrl/Cmd+A) → 복사(Ctrl/Cmd+C) 한 뒤
-                        아래에 붙여넣어주세요. 아래 칸에 뭔가 입력되어 있으면 <strong>그 내용이 그대로 제출</strong>되고,
-                        비워두면 자동 가져오기를 시도하지만 대부분의 경우 실패해요.
-                      </p>
-                      <div className="space-y-3">
-                        <div className="space-y-1.5">
-                          <Label className="text-[11px] font-bold text-slate-600">HTML</Label>
-                          <Textarea
-                            value={pastedHtml}
-                            onChange={(e) => setPastedHtml(e.target.value)}
-                            placeholder="<div>...</div>"
-                            rows={5}
-                            className="font-mono text-[11px] resize-y"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-[11px] font-bold text-slate-600">CSS</Label>
-                          <Textarea
-                            value={pastedCss}
-                            onChange={(e) => setPastedCss(e.target.value)}
-                            placeholder="body { ... }"
-                            rows={5}
-                            className="font-mono text-[11px] resize-y"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-[11px] font-bold text-slate-600">JS</Label>
-                          <Textarea
-                            value={pastedJs}
-                            onChange={(e) => setPastedJs(e.target.value)}
-                            placeholder="console.log(...)"
-                            rows={5}
-                            className="font-mono text-[11px] resize-y"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div className="w-full aspect-video bg-white rounded-xl border border-slate-200 shadow-inner overflow-hidden">
+                  <iframe
+                    srcDoc={editorPreviewDoc}
+                    title="Final Preview"
+                    className="w-full h-full border-0"
+                    sandbox="allow-scripts"
+                  />
                 </div>
+                <p className="text-xs text-center font-medium bg-rose-50 text-rose-600 py-2 rounded-lg">
+                  최종 제출 후에는 코드를 수정할 수 없습니다. 결과가 올바른지 확인해주세요.
+                </p>
               </div>
-            )}
+            ) : null}
           </div>
 
           <DialogFooter className="gap-2 sm:justify-end border-t border-slate-100 pt-4">
@@ -852,7 +934,12 @@ function QuestionDetailPageContent() {
             </Button>
             <Button
               onClick={handleFinalSubmit}
-              disabled={isExecuting || (isColab ? !isColabUrlValid : !embedUrl)}
+              disabled={
+                isExecuting ||
+                (isColab
+                  ? !isColabUrlValid
+                  : !editorHtml.trim() && !editorCss.trim() && !editorJs.trim())
+              }
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 shadow-2xs flex items-center gap-1.5 disabled:opacity-50"
             >
               {isExecuting ? <LoaderCircleIcon className="size-4 animate-spin" /> : <CheckCircle2Icon className="size-4" />}

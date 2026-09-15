@@ -13,8 +13,8 @@ import {
   PlusIcon,
   LoaderCircleIcon,
   XIcon,
-  Code2Icon,
   BookOpenIcon,
+  SquareCodeIcon,
 } from 'lucide-react'
 
 import { Header } from '@/components/header'
@@ -44,10 +44,10 @@ export interface GroupItem {
   members_count?: number
   members?: Array<unknown>
   created_at: string
-  platform?: 'codepen' | 'colab' // 🟢 [추가] 그룹이 사용하는 실습 플랫폼
+  platform?: 'codepen' | 'colab' // 🟢 [수정] CodePen 제거, 'codepen' 값은 이제 "자체 에디터"를 의미
 }
 
-// 🟢 [추가] 플랫폼 배지 - 그룹 카드에서 한눈에 CodePen/Colab 구분
+// 🟢 [수정] 플랫폼 배지 - 그룹 카드에서 한눈에 자체 에디터/Colab 구분
 function PlatformBadge({ platform }: { platform?: 'codepen' | 'colab' }) {
   const isColab = platform === 'colab'
   return (
@@ -55,11 +55,11 @@ function PlatformBadge({ platform }: { platform?: 'codepen' | 'colab' }) {
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
         isColab
           ? 'bg-amber-50 text-amber-700 border-amber-200'
-          : 'bg-slate-50 text-slate-600 border-slate-200'
+          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
       }`}
     >
-      {isColab ? <BookOpenIcon className="w-3 h-3" /> : <Code2Icon className="w-3 h-3" />}
-      {isColab ? 'Colab' : 'CodePen'}
+      {isColab ? <BookOpenIcon className="w-3 h-3" /> : <SquareCodeIcon className="w-3 h-3" />}
+      {isColab ? 'Colab' : 'codepen'}
     </span>
   )
 }
@@ -69,7 +69,7 @@ function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  // 🟢 [추가] 그룹이 사용할 실습 플랫폼 선택 상태 (기본값: codepen)
+  // 🟢 [수정] 그룹이 사용할 실습 플랫폼 선택 상태 (기본값: codepen = 자체 에디터)
   const [platform, setPlatform] = useState<'codepen' | 'colab'>('codepen')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -145,6 +145,9 @@ function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
             <label className='text-xs font-bold text-[#173A23] px-0.5'>
               이 그룹에서 사용할 실습 플랫폼
             </label>
+            {/* 🟢 [수정] CodePen을 완전히 제거하고 "자체 에디터"로 대체했습니다.
+                platform 값 자체는 DB 마이그레이션 없이 그대로 'codepen' 문자열을 쓰지만,
+                이제 의미상으로는 "자체 에디터"입니다. */}
             <div className='grid grid-cols-2 gap-2'>
               <button
                 type='button'
@@ -156,8 +159,8 @@ function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
                     : 'border-[#EBF1F4] text-[#868C88] hover:border-[#CBD9E1]'
                 }`}
               >
-                <Code2Icon className='w-5 h-5' />
-                <span className='text-xs font-bold'>CodePen</span>
+                <SquareCodeIcon className='w-5 h-5' />
+                <span className='text-xs font-bold'>codepen</span>
                 <span className='text-[10px] text-[#868C88]'>웹 프론트엔드 실습</span>
               </button>
               <button
