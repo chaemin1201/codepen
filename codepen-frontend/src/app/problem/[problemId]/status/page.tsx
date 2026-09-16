@@ -357,11 +357,6 @@ function SubmissionStatusContent() {
             <p className="text-2xl font-extrabold text-emerald-700">{fullySubmittedStudentsCount}<span className="text-sm font-medium">명</span></p>
           </div>
 
-          <div className="flex-1 rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3 text-center shadow-2xs">
-            <p className="text-xs text-amber-600 font-medium">늦은 제출 포함</p>
-            <p className="text-2xl font-extrabold text-amber-600">{lateIncludedStudentsCount}<span className="text-sm font-medium">명</span></p>
-          </div>
-
           <div className="flex-1 rounded-xl border border-rose-200 bg-rose-50/50 px-4 py-3 text-center shadow-2xs">
             <p className="text-xs text-rose-600 font-medium">미완료 인원</p>
             <p className="text-2xl font-extrabold text-rose-600">{notSubmittedStudentsCount}<span className="text-sm font-medium">명</span></p>

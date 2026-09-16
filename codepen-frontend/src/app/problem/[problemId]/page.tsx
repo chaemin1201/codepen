@@ -1,302 +1,664 @@
 'use client'
 
-import React, { Suspense, useState, useEffect } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import React, { Suspense } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
+import {
+  ExternalLinkIcon,
+  FlagIcon,
+  LoaderCircleIcon,
+  SendIcon,
+  XIcon,
+  PlusIcon,
+  PaperclipIcon,
+  SearchIcon,
+  GripVerticalIcon,
+  UsersIcon,
+  BarChart2Icon,
+  ClipboardCheckIcon,
+  GlobeIcon,
+  FileTextIcon,
+  PencilIcon,
+  Trash2Icon,
+  ArrowLeftIcon,
+  ClockIcon,
+  ImageIcon,
+  UploadIcon,
+} from 'lucide-react'
+
 import { Header } from '@/components/header'
 import { GroupProvider, useGroup } from '@/context/group-provider'
 import { ProblemProvider, useProblem } from '@/context/problem-provider'
-import { useMe } from '@/context/me-provider'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useSubmission } from '@/lib/useSubmission'
 import { useGroupOwner } from '@/lib/useGroupOwner'
 import { useCategories } from '@/lib/useCategories'
-import { 
-  CheckCircle2Icon, 
-  XCircleIcon, 
-  RotateCwIcon,
-  ClockIcon,
-  FileTextIcon,
-  CopyIcon,
-  ArrowLeftIcon
-} from 'lucide-react'
-import { toast } from 'sonner'
+import { useMe } from '@/context/me-provider'
+import { useQuestions } from '@/lib/useQuestions'
+import type { Question } from '@/types/question'
+import { fetcher } from '@/lib/fetcher'
+import { Button } from '@/components/ui/button'
+import { EditProblemDialog } from '@/components/edit-problem-dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from '@/components/ui/dialog'
 
-// 🟢 제출 상태 ('SUBMITTED' | 'LATE' | 'NOT_SUBMITTED')
-// LATE: 기간(마감) 이후에 제출된 경우 - lateBy에 얼마나 늦었는지 문자열로 표시
-interface ProblemStatus {
-  problemId: string
-  status: 'SUBMITTED' | 'LATE' | 'NOT_SUBMITTED'
-  submittedAt?: string
-  deadline: string
-  deadlineRaw?: string
-  lateBy?: string
-}
+// 🟢 공통 인풋 스타일: 그룹 개설하기 다이얼로그와 동일한 톤 + 포커스 시 연한 초록색 링
+const fieldInputClass =
+  'w-full bg-background text-foreground border-input rounded-xl h-10 px-3.5 text-xs ' +
+  'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
 
-// 🕒 마감(deadlineRaw)과 제출 시각(submittedRaw)을 비교해 얼마나 늦었는지 사람이 읽기 쉬운 문자열로 반환
-function calcLateBy (deadlineRaw?: string, submittedRaw?: string): string | undefined {
-  if (!deadlineRaw || !submittedRaw) return undefined
+const fieldTextareaClass =
+  'w-full bg-background text-foreground border-input rounded-xl resize-none p-3 text-xs ' +
+  'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
 
-  const toDate = (v: string) => new Date(
-    typeof v === 'string' && !v.endsWith('Z') && !v.includes('+') ? `${v}Z` : v
+// --- 제출 여부(횟수) 배지 ---
+const SubmissionBadge = ({ attemptsCount }: { attemptsCount: number }) => {
+  const isSubmitted = attemptsCount > 0
+
+  return (
+    <div
+      className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs border min-w-[95px] ${
+        isSubmitted
+          ? 'bg-blue-50/70 text-blue-700 border-blue-200/80' // 제출 시 파란색
+          : 'bg-rose-50/70 text-rose-700 border-rose-200/80' // 미제출 시 빨간색
+      }`}
+    >
+      <span
+        className={`h-4 min-w-[16px] px-1.5 rounded-full flex items-center justify-center text-[10px] text-white font-bold ${
+          isSubmitted ? 'bg-blue-500' : 'bg-rose-500'
+        }`}
+      >
+        {attemptsCount}
+      </span>
+      <span className="text-[11px] font-bold whitespace-nowrap">
+        {isSubmitted ? '회 제출' : '미제출'}
+      </span>
+    </div>
   )
-
-  const deadlineDate = toDate(deadlineRaw)
-  const submittedDate = toDate(submittedRaw)
-  const diffMs = submittedDate.getTime() - deadlineDate.getTime()
-  if (diffMs <= 0) return undefined
-
-  const diffMin = Math.floor(diffMs / 60000)
-  const days = Math.floor(diffMin / (60 * 24))
-  const hours = Math.floor((diffMin % (60 * 24)) / 60)
-  const minutes = diffMin % 60
-
-  if (days > 0) return `${days}일 ${hours}시간 늦음`
-  if (hours > 0) return `${hours}시간 ${minutes}분 늦음`
-  return `${minutes}분 늦음`
 }
 
-interface StudentRow {
-  id: string
-  name: string
-  studentId: string
-  role: 'AUDITOR' | 'STUDENT' | 'TA'
-  ip?: string
-  isIpSuspicious?: boolean
-  problems: ProblemStatus[]
-}
-
-function SubmissionStatusContent() {
+// --- 소문제 목록 컴포넌트 ---
+function QuestionList({
+  problemId,
+  groupId,
+  isOwner,
+  searchTerm,
+}: {
+  problemId: number
+  groupId: number
+  isOwner: boolean
+  searchTerm: string
+}) {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const { me } = useMe()
-  const { group } = useGroup()
-  const { problem } = useProblem()
-  const { categories } = useCategories(group?.group_id ?? null)
-  const isOwner = useGroupOwner()
+  const { questions, isLoading, mutate } = useQuestions(problemId)
+  const [isAddOpen, setIsAddOpen] = React.useState(false)
+  const [newTitle, setNewTitle] = React.useState('')
+  const [newDescription, setNewDescription] = React.useState('')
+  const [newCondition, setNewCondition] = React.useState('')
+  const [newExample, setNewExample] = React.useState('')
+  const [newExampleImageUrl, setNewExampleImageUrl] = React.useState('')
+  const [newScore, setNewScore] = React.useState('10')
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [uploadingImage, setUploadingImage] = React.useState(false)
 
-  const problemIdParam = searchParams.get('problemId') || (problem ? String(problem.problem_id) : '1')
+  // 📸 신규 문제 생성용 이미지 업로드 함수
+  const handleNewImageUpload = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('이미지 파일만 업로드할 수 있습니다.')
+      return
+    }
 
-  const [problemList, setProblemList] = useState<any[]>([])
-  const [studentList, setStudentList] = useState<StudentRow[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+    setUploadingImage(true)
+    const formData = new FormData()
+    // 백엔드 upload_question_image(file: UploadFile = File(...)) 매핑 키인 'file'로 지정
+    formData.append('file', file)
 
-  // 카테고리 제목 + 문제지 제목 결합 (예: 'test-01')
-  const category = categories?.find((c) => c.category_id === problem?.category_id)
-  const combinedProblemTitle = category && problem 
-    ? `${category.title}-${problem.title}` 
-    : problem?.title ?? '문제 현황'
-
-  const fetchStatusData = async () => {
-    setIsLoading(true)
     try {
-      // 1. 문제지 정보 가져오기
-      const problemRes = await fetch(`/api/problem/${problemIdParam}`)
-      if (!problemRes.ok) throw new Error('문제 정보를 불러오지 못했습니다.')
-      const problemData = await problemRes.json()
+      const res = await fetch('/api/question/upload-image', {
+        method: 'POST',
+        body: formData, // multipart/form-data 자동 전송
+      })
 
-      const formatDeadline = (isoString: string) => {
-        if (!isoString) return '기한 없음'
-
-        const utcStr = typeof isoString === 'string' && !isoString.endsWith('Z') && !isoString.includes('+')
-          ? `${isoString}Z`
-          : isoString
-
-        return new Date(utcStr).toLocaleString('ko-KR', {
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true,
-        })
-      }
-      const deadlineStr = formatDeadline(problemData.deadline)
-      const deadlineRaw: string | undefined = problemData.deadline || undefined
-
-      // 2. 소문제 목록 가져오기
-      const questionsRes = await fetch(`/api/question/problem/${problemIdParam}`)
-      const questionsData = await questionsRes.json()
-
-      // q.question_id를 순수 고유 DB PK ID로 지정
-      const formattedQuestions = questionsData.map((q: any) => ({
-        id: String(q.question_id || q.id),
-        title: q.title || `문제 ${q.question_id || q.id}`,
-        deadline: deadlineStr,
-      }))
-      setProblemList(formattedQuestions)
-
-      const studentsMap = new Map<string, StudentRow>()
-
-      // 3. 그룹 수강생 전체 목록 초기화
-      if (group?.group_id) {
-        try {
-          const groupStudentsRes = await fetch(`/api/group/${group.group_id}/students`)
-          if (groupStudentsRes.ok) {
-            const groupStudents = await groupStudentsRes.json()
-            groupStudents.forEach((st: any) => {
-              const primaryId = String(st.user_id || st.userId || st.id || st.username)
-              
-              // 🟢 실명 / 학번 필드 보완 처리
-              const displayName = st.name || st.user?.name || st.username || '학생'
-              const displayStudentNo = st.student_no || st.studentId || st.user?.student_no || primaryId
-
-              studentsMap.set(primaryId, {
-                id: primaryId,
-                name: displayName,
-                studentId: displayStudentNo,
-                role: 'STUDENT',
-                ip: undefined,
-                isIpSuspicious: false,
-                problems: formattedQuestions.map((mq: { id: string }) => ({
-                  problemId: mq.id,
-                  status: 'NOT_SUBMITTED',
-                  deadline: deadlineStr,
-                  deadlineRaw,
-                })),
-              })
-            })
-          }
-        } catch (e) {
-          console.warn('그룹 수강생 목록 불러오기 실패:', e)
-        }
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || errData.error || `업로드 실패 (${res.status})`)
       }
 
-      // 4. 소문제별 시도/제출 기록 매핑
-      for (const q of formattedQuestions) {
-        const attemptsRes = await fetch(`/api/question/${q.id}/attempts`)
-        if (!attemptsRes.ok) continue
-
-        const attemptsData = await attemptsRes.json()
-
-        attemptsData.forEach((att: any) => {
-          const attUserId = String(att.user_id || att.userId || '')
-          const attUsername = String(att.name || att.username || att.user?.name || '')
-          const attStudentNo = String(att.student_no || att.studentId || att.user?.student_no || '')
-
-          // 학생 찾기 (ID / 이름 / 학번 유연 교차 매칭)
-          let studentEntry: StudentRow | undefined = undefined
-
-          for (const [k, v] of studentsMap.entries()) {
-            if (
-              (attUserId && (k === attUserId || v.id === attUserId)) ||
-              (attUsername && (v.name === attUsername || k === attUsername)) ||
-              (attStudentNo && v.studentId === attStudentNo)
-            ) {
-              studentEntry = v
-              break
-            }
-          }
-
-          if (!studentEntry) {
-            const newKey = attUserId || attUsername || attStudentNo
-            studentEntry = {
-              id: newKey,
-              name: attUsername || '학생',
-              studentId: attStudentNo || newKey,
-              role: 'STUDENT',
-              ip: att.ip || undefined,
-              isIpSuspicious: false,
-              problems: formattedQuestions.map((mq: { id: string }) => ({
-                problemId: mq.id,
-                status: 'NOT_SUBMITTED',
-                deadline: deadlineStr,
-                deadlineRaw,
-              })),
-            }
-            studentsMap.set(newKey, studentEntry)
-          }
-
-          // 이름과 학번 정보가 초기화 시점에 아이디로 기본 설정되어 있었다면 실데이터로 보완
-          if (attUsername && (studentEntry.name === '학생' || studentEntry.name === studentEntry.id)) {
-            studentEntry.name = attUsername
-          }
-          if (attStudentNo && studentEntry.studentId === studentEntry.id) {
-            studentEntry.studentId = attStudentNo
-          }
-
-          // 소문제(q.id)의 제출 여부를 problemId로 매칭
-          const probEntry = studentEntry.problems.find((p) => String(p.problemId) === String(q.id))
-          if (probEntry) {
-            const submissionTime = att.last_submitted_at || att.updated_at || att.submitted_at || att.created_at
-            const attemptsCount = Number(att.attempts_count || 0)
-
-            if (attemptsCount > 0 || !!submissionTime) {
-              if (submissionTime) {
-                probEntry.submittedAt = formatDeadline(submissionTime)
-                // 🟢 마감(deadlineRaw) 이후 제출이면 LATE, 아니면 SUBMITTED로 구분
-                const lateBy = calcLateBy(probEntry.deadlineRaw, submissionTime)
-                if (lateBy) {
-                  probEntry.status = 'LATE'
-                  probEntry.lateBy = lateBy
-                } else {
-                  probEntry.status = 'SUBMITTED'
-                }
-              } else {
-                probEntry.status = 'SUBMITTED'
-              }
-            }
-          }
-        })
-      }
-
-      setStudentList(Array.from(studentsMap.values()))
-    } catch (error) {
-      console.error(error)
-      toast.error('현황 데이터를 불러오는데 실패했습니다.')
+      const data = await res.json()
+      // 백엔드에서 반환한 image_url 경로 설정
+      setNewExampleImageUrl(data.image_url || data.url)
+      toast.success('결과 예시 이미지가 등록되었습니다.')
+    } catch (err: any) {
+      console.error('Image upload error:', err)
+      toast.error(err.message || '이미지 업로드 중 오류가 발생했습니다.')
     } finally {
-      setIsLoading(false)
+      setUploadingImage(false)
     }
   }
 
-  useEffect(() => {
-    fetchStatusData()
-  }, [problemIdParam])
-
-  // 🟢 수치 집계: 모든 소문제를 '기한 내(SUBMITTED)' 또는 '늦게라도(LATE)' 다 풀었을 때 '제출 인원'으로 간주
-  const totalStudentsCount = studentList.length
-
-  const fullySubmittedStudentsCount = studentList.filter((s) =>
-    s.problems.length > 0 && s.problems.every((p) => p.status === 'SUBMITTED' || p.status === 'LATE')
-  ).length
-
-  const notSubmittedStudentsCount = totalStudentsCount - fullySubmittedStudentsCount
-
-  // 셀 렌더링 (제출 완료: 초록 아이콘 / 제출 늦음: 주황 시계 아이콘 + 늦은 시간 / 미제출: 빨간 아이콘)
-  const renderStatusCell = (prob: ProblemStatus) => {
-    const isNotSubmitted = prob.status === 'NOT_SUBMITTED'
-    const isLate = prob.status === 'LATE'
-
-    return (
-      <td key={prob.problemId} className={`py-4 px-4 text-center ${isNotSubmitted ? 'bg-rose-50/70' : isLate ? 'bg-amber-50/70' : ''}`}>
-        <div className="group relative inline-block">
-          {prob.status === 'SUBMITTED' && (
-            <CheckCircle2Icon className="size-5 text-emerald-500 mx-auto" />
-          )}
-          {isLate && (
-            <ClockIcon className="size-5 text-amber-500 mx-auto" />
-          )}
-          {isNotSubmitted && (
-            <XCircleIcon className="size-5 text-rose-500 mx-auto" />
-          )}
-
-          {isLate && (
-            <span className="block text-[9px] font-bold text-amber-600 mt-0.5 whitespace-nowrap">
-              {prob.lateBy}
-            </span>
-          )}
-
-          {prob.submittedAt && (
-            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:flex items-center gap-1 whitespace-nowrap text-white text-[10px] px-2 py-1 rounded shadow-md z-10 bg-slate-900">
-              <ClockIcon className="size-3" />
-              {isLate ? `${prob.submittedAt} (${prob.lateBy})` : prob.submittedAt}
-            </span>
-          )}
-        </div>
-      </td>
-    )
+  // 📸 신규 문제 생성 다이얼로그용 이미지 삭제
+  const handleNewImageDelete = () => {
+    setNewExampleImageUrl('')
+    toast.success('이미지 첨부가 취소되었습니다.')
   }
 
-  if (isLoading) return <div className="p-12"><Skeleton className="h-[600px] w-full" /></div>
+  // 🟢 소문제 생성 핸들러
+  const onAdd = async () => {
+    if (!newTitle.trim()) return toast.error('문제 제목을 입력해주세요.')
+    setIsSubmitting(true)
+    try {
+      await fetcher('/api/question', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problem_id: problemId,
+          title: newTitle,
+          description: newDescription,
+          condition: newCondition,
+          conditions: newCondition,
+          example_output: newExample,
+          example_image_url: newExampleImageUrl,
+          score: Number(newScore) || 0,
+          order: questions?.length ?? 0,
+          is_visible: true,
+        }),
+      })
+      toast.success('소문제가 추가되었습니다.')
+
+      setNewTitle('')
+      setNewDescription('')
+      setNewCondition('')
+      setNewExample('')
+      setNewExampleImageUrl('')
+      setIsAddOpen(false)
+
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('소문제 추가에 실패했습니다.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const toggleVisibility = async (q: Question) => {
+    try {
+      await fetcher(`/api/question/${q.question_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problem_id: q.problem_id,
+          title: q.title,
+          description: q.description,
+          condition: (q as any).condition || (q as any).conditions,
+          conditions: (q as any).condition || (q as any).conditions,
+          example_output: q.example_output,
+          example_image_url: (q as any).example_image_url,
+          score: q.score,
+          order: q.order,
+          is_visible: !q.is_visible,
+        }),
+      })
+      toast.success(
+        q.is_visible ? '비공개로 변경되었습니다.' : '공개로 변경되었습니다.'
+      )
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('공개 상태 변경 실패')
+    }
+  }
+
+  const onUpdateScore = async (q: Question, newScore: number) => {
+    try {
+      await fetcher(`/api/question/${q.question_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ score: newScore }),
+      })
+      toast.success('배점이 수정되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('배점 수정 실패')
+    }
+  }
+
+  const onFileUpload = async (q: Question, file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const res = await fetch(`/api/question/${q.question_id}/file`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!res.ok) throw new Error('Upload failed')
+
+      toast.success('첨부파일이 등록되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('파일 업로드 실패')
+    }
+  }
+
+  const onFileDelete = async (q: Question) => {
+    if (!confirm(`'${q.attachment_name}' 파일을 삭제하시겠습니까?`)) return
+    try {
+      await fetcher(`/api/question/${q.question_id}/file`, {
+        method: 'DELETE',
+      })
+      toast.success('첨부파일이 삭제되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('파일 삭제 실패')
+    }
+  }
+
+  const onDelete = async (q: Question) => {
+    if (!confirm(`'${q.title}' 문제를 삭제하시겠습니까?`)) return
+    try {
+      await fetcher(`/api/question/${q.question_id}`, { method: 'DELETE' })
+      toast.success('문제가 삭제되었습니다.')
+      await mutate(undefined, { revalidate: true })
+    } catch {
+      toast.error('삭제 실패')
+    }
+  }
+
+  const filteredQuestions = questions?.filter((q) =>
+    q.title.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+
+  return (
+    <div className="w-full space-y-3">
+      <h2 className="text-xl font-bold text-slate-900">나의 문제들</h2>
+
+      {/* 문제 추가 다이얼로그 (🟢 그룹 개설하기 다이얼로그와 동일한 톤으로 통일) */}
+      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+        <DialogTrigger asChild>
+          <button id="add-question-trigger" className="hidden" />
+        </DialogTrigger>
+        <DialogContent className="bg-[#FCFCFC] text-foreground border-slate-100 rounded-3xl p-6 shadow-lg sm:max-w-xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader className="border-b border-slate-100 pb-4">
+            <DialogTitle className="text-xl font-bold text-foreground">새 문제 생성</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3.5 py-4">
+            {/* 1. 문제 이름 */}
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5">문제 이름</Label>
+              <Input
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="예: 1번. 두 수의 합 구하기"
+                className={fieldInputClass}
+              />
+            </div>
+
+            {/* 2. 문제 설명 & 조건 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-bold text-[#173A23] px-0.5">문제 설명</Label>
+                <Textarea
+                  rows={4}
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="문제 상세 내용을 작성하세요."
+                  className={fieldTextareaClass}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-bold text-[#173A23] px-0.5">조건</Label>
+                <Textarea
+                  rows={4}
+                  value={newCondition}
+                  onChange={(e) => setNewCondition(e.target.value)}
+                  placeholder="문제 풀이에 필요한 제약 조건 등을 작성하세요."
+                  className={fieldTextareaClass}
+                />
+              </div>
+            </div>
+
+            {/* 3. 결과 예시 (텍스트) */}
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5">결과 예시</Label>
+              <Textarea
+                rows={3}
+                value={newExample}
+                onChange={(e) => setNewExample(e.target.value)}
+                placeholder="입출력 예시를 작성하세요."
+                className={fieldTextareaClass}
+              />
+            </div>
+
+            {/* 🟢 4. 결과 예시 이미지 업로드 버튼 영역 */}
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5 flex items-center gap-1.5">
+                <ImageIcon className="size-3.5 text-[#589960]" /> 결과 예시 이미지 첨부
+              </Label>
+
+              {newExampleImageUrl ? (
+                <div className="relative border border-[#EBF1F4] rounded-xl p-2 bg-[#f7fbf8] flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={newExampleImageUrl}
+                      alt="결과 예시 미리보기"
+                      className="h-14 w-14 object-cover rounded-md border border-[#EBF1F4] bg-white"
+                    />
+                    <span className="text-xs text-[#868C88] truncate max-w-[220px]">
+                      {newExampleImageUrl}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleNewImageDelete}
+                    className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 h-8 px-2"
+                  >
+                    <Trash2Icon className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 bg-[#f1f8f2] hover:bg-[#e8f5e9] border border-[#EBF1F4] rounded-xl text-xs font-medium text-[#173A23] transition-colors">
+                    {uploadingImage ? (
+                      <LoaderCircleIcon className="animate-spin size-4 text-[#589960]" />
+                    ) : (
+                      <UploadIcon className="size-4 text-[#589960]" />
+                    )}
+                    이미지 첨부하기
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={uploadingImage}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) handleNewImageUpload(file)
+                      }}
+                    />
+                  </label>
+                  <span className="text-[11px] text-[#868C88]">
+                    결과 화면 스크린샷 등을 등록할 수 있습니다.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* 5. 배점 */}
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-bold text-[#173A23] px-0.5">배점</Label>
+              <Input
+                type="number"
+                value={newScore}
+                onChange={(e) => setNewScore(e.target.value)}
+                className={`${fieldInputClass} w-28`}
+              />
+            </div>
+          </div>
+          <DialogFooter className="sm:justify-center">
+            <Button
+              onClick={onAdd}
+              disabled={isSubmitting || uploadingImage}
+              className="bg-[#589960] hover:bg-[#173A23] text-white font-bold rounded-xl px-5 transition-colors"
+            >
+              {isSubmitting ? (
+                <LoaderCircleIcon className="animate-spin" />
+              ) : (
+                '생성하기'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 데이터 테이블 */}
+      {isLoading ? (
+        <div className="py-8 flex justify-center">
+          <LoaderCircleIcon className="animate-spin text-slate-400" />
+        </div>
+      ) : !filteredQuestions || filteredQuestions.length === 0 ? (
+        <div className="py-8 text-center text-xs text-slate-400 border border-dashed rounded-xl bg-slate-50">
+          등록된 문제가 없습니다.
+        </div>
+      ) : (
+        <div className="overflow-x-auto border border-slate-200/80 rounded-xl shadow-2xs bg-white">
+          <table className="w-full text-xs text-center border-collapse">
+            <thead>
+              <tr className="bg-slate-100/90 text-slate-600 font-semibold border-b border-slate-200 h-11">
+                <th className="w-12 px-2 text-slate-400">
+                  <div className="flex items-center justify-center">
+                    <GripVerticalIcon className="size-3.5" />
+                  </div>
+                </th>
+                <th className="px-4 py-2 text-left font-medium">문제 제목</th>
+                <th className="px-3 py-2 font-medium">제출 여부</th>
+                {/* 시도한 횟수 열 삭제됨 */}
+                <th className="px-3 py-2 font-medium">최종 제출 시간</th>
+                <th className="px-3 py-2 font-medium">배점</th>
+                <th className="px-3 py-2 font-medium">첨부파일</th>
+                {isOwner && (
+                  <th className="px-3 py-2 font-medium">공개 상태</th>
+                )}
+                {isOwner && (
+                  <th className="px-3 py-2 font-medium">문제 관리</th>
+                )}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredQuestions.map((q, idx) => {
+                const rawDate = (q as any).my_attempt?.last_submitted_at
+
+                let formattedDate = '-'
+                if (rawDate) {
+                  const utcDateString =
+                    typeof rawDate === 'string' &&
+                    !rawDate.endsWith('Z') &&
+                    !rawDate.includes('+')
+                      ? `${rawDate}Z`
+                      : rawDate
+
+                  formattedDate = new Date(utcDateString).toLocaleString(
+                    'ko-KR',
+                    {
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: true,
+                    }
+                  )
+                }
+
+                return (
+                  <tr
+                    key={q.question_id}
+                    onClick={() => router.push(`/problem/${problemId}/${q.question_id}?groupId=${groupId}`)}
+                    className="hover:bg-slate-50/80 transition-colors h-14 cursor-pointer"
+                  >
+                    <td className="text-slate-400 font-medium">
+                      <div className="flex items-center justify-center gap-1">
+                        <GripVerticalIcon className="size-3.5 text-slate-300" />
+                        <span>{q.order ?? idx + 1}</span>
+                      </div>
+                    </td>
+                    <td className="text-left font-bold text-slate-800 px-4">
+                      {q.title}
+                    </td>
+                    <td>
+                      <SubmissionBadge attemptsCount={q.my_attempt?.attempts_count ?? 0} />
+                    </td>
+
+                    {/* 시도한 횟수 td 삭제됨 */}
+
+                    <td className="text-slate-600 font-mono text-[11px]">
+                      {formattedDate !== '-' ? (
+                        <span className="inline-flex items-center gap-1 bg-slate-50 px-2 py-1 rounded border border-slate-100 text-slate-700 font-semibold">
+                          <ClockIcon className="size-3 text-slate-400" />
+                          {formattedDate}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300">-</span>
+                      )}
+                    </td>
+
+                    <td
+                      className="font-bold text-slate-800"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {isOwner ? (
+                        <input
+                          type="number"
+                          defaultValue={q.score}
+                          onBlur={(e) => {
+                            const val = Number(e.target.value)
+                            if (val !== q.score) onUpdateScore(q, val)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.currentTarget.blur()
+                          }}
+                          className="w-14 text-center border border-slate-200 rounded px-1 py-0.5 text-xs focus:outline-none focus:border-[#589960] focus:ring-2 focus:ring-[#A8D5B0] font-bold"
+                        />
+                      ) : (
+                        q.score
+                      )}
+                    </td>
+
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center gap-1">
+                        {q.attachment_name ? (
+                          <div className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded-md text-[11px] font-medium transition-colors">
+                            <PaperclipIcon className="size-3 text-emerald-600" />
+                            <a
+                              href={`/uploads/questions/${q.question_id}_${q.attachment_name}`}
+                              download={q.attachment_name}
+                              className="max-w-[80px] truncate hover:underline"
+                              title={q.attachment_name}
+                            >
+                              {q.attachment_name}
+                            </a>
+                            {isOwner && (
+                              <div className="flex items-center gap-1 ml-0.5">
+                                <label
+                                  className="cursor-pointer text-slate-400 hover:text-slate-600"
+                                  title="파일 변경"
+                                >
+                                  <PencilIcon className="size-2.5" />
+                                  <input
+                                    type="file"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0]
+                                      if (file) onFileUpload(q, file)
+                                    }}
+                                  />
+                                </label>
+                                <button
+                                  onClick={() => onFileDelete(q)}
+                                  className="text-slate-400 hover:text-rose-500 cursor-pointer"
+                                  title="파일 삭제"
+                                >
+                                  <Trash2Icon className="size-2.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <label className="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 cursor-pointer inline-flex items-center justify-center transition-colors">
+                            <PaperclipIcon className="size-3.5" />
+                            {isOwner && (
+                              <input
+                                type="file"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0]
+                                  if (file) onFileUpload(q, file)
+                                }}
+                              />
+                            )}
+                          </label>
+                        )}
+                      </div>
+                    </td>
+
+                    {isOwner && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => toggleVisibility(q)}
+                          className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors p-0.5 ${
+                            q.is_visible ? 'bg-emerald-500' : 'bg-slate-300'
+                          }`}
+                        >
+                          <span
+                            className={`inline-flex items-center justify-center size-5 rounded-full bg-white transition-transform ${
+                              q.is_visible
+                                ? 'translate-x-5'
+                                : 'translate-x-0'
+                            }`}
+                          >
+                            <GlobeIcon
+                              className={`size-3 ${
+                                q.is_visible
+                                  ? 'text-emerald-500'
+                                  : 'text-slate-400'
+                              }`}
+                            />
+                          </span>
+                        </button>
+                      </td>
+                    )}
+
+                    {isOwner && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => onDelete(q)}
+                          className="text-rose-500 hover:underline font-medium text-[11px]"
+                        >
+                          삭제
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProblemPageContent() {
+  const router = useRouter()
+  const { me } = useMe()
+  const { group } = useGroup()
+  const { problem, refresh } = useProblem()
+  const { categories } = useCategories(group?.group_id ?? null)
+  const { submission, isLoading, error, mutate } = useSubmission(
+    problem?.problem_id ?? 0
+  )
+  const isOwner = useGroupOwner()
+  const [searchTerm, setSearchTerm] = React.useState('')
+
+  if (!problem || isLoading) return <Skeleton className="h-8 w-full" />
+  if (error) {
+    toast.error('문제를 불러오는 중 오류가 발생했습니다.')
+    return null
+  }
+
+  const category = categories?.find(
+    (c) => c.category_id === problem.category_id
+  )
 
   return (
     <div className="min-h-screen bg-[#fafafa]">
@@ -306,149 +668,141 @@ function SubmissionStatusContent() {
       <header className="w-full bg-white border-b border-slate-100 px-6 py-3 flex items-center gap-3 text-xs text-slate-500">
         <button
           onClick={() => router.back()}
-          className="size-8 rounded-lg border border-slate-300 flex items-center justify-center text-slate-600 hover:bg-slate-50 transition-colors shadow-2xs"
+          className="size-8 rounded-lg border border-slate-300 flex items-center justify-center text-slate-600 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
           title="뒤로 가기"
         >
           <ArrowLeftIcon className="size-4" />
         </button>
 
         <div className="flex items-center gap-2">
-          <span className="cursor-pointer hover:underline hover:text-slate-700" onClick={() => router.push('/groups')}>
+          <span
+            className="cursor-pointer hover:underline hover:text-slate-700"
+            onClick={() => router.push('/groups')}
+          >
             나의 그룹들
           </span>
           {group && (
             <>
               <span>&gt;</span>
-              <span className="cursor-pointer hover:underline hover:text-slate-700 flex items-center gap-1" onClick={() => router.push(`/problem?groupId=${group.group_id}`)}>
+              <span
+                className="cursor-pointer hover:underline hover:text-slate-700 flex items-center gap-1"
+                onClick={() => router.push(`/problem?groupId=${group.group_id}`)}
+              >
                 📚 {group.group_name}
               </span>
             </>
           )}
-          {problem && (
-            <>
-              <span>&gt;</span>
-              <span className="cursor-pointer hover:underline hover:text-slate-700 flex items-center gap-1" onClick={() => router.push(`/problem/${problem.problem_id}?groupId=${group?.group_id}`)}>
-                📄 {combinedProblemTitle}
-              </span>
-            </>
-          )}
           <span>&gt;</span>
-          <span className="font-bold text-slate-800">제출 현황</span>
+          <span className="font-medium text-slate-700 flex items-center gap-1">
+            <FileTextIcon className="size-3 text-slate-400" />
+            {category
+              ? `${category.title} - ${problem.title}`
+              : problem.title}
+          </span>
         </div>
       </header>
 
-      {/* 본문 */}
-      <main className="p-8 max-w-[1400px] mx-auto space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">{combinedProblemTitle} - 제출 현황</h1>
-
-        {/* 🟢 [수정] 요약 카드를 전체/제출/미제출 3개로 단순화 (완료 인원 → 제출 인원으로 이름 변경, 
-            늦은 제출 포함 카드는 제거 - 제출 인원 수치에 이미 늦은 제출도 포함되어 있어서 혼란스러웠음) */}
-        <div className="flex gap-3">
-          <div className="flex-1 rounded-xl border border-slate-200 bg-slate-100/50 px-4 py-3 text-center shadow-2xs">
-            <p className="text-xs text-slate-500 font-medium">전체 인원</p>
-            <p className="text-2xl font-extrabold text-slate-800">{totalStudentsCount}<span className="text-sm font-medium">명</span></p>
+      <div className="flex flex-col gap-5 max-w-6xl mx-auto p-6">
+        {/* 상단 타이틀 및 액션 버튼 배치 */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-slate-100 rounded-lg text-slate-500">
+              <FileTextIcon className="size-6" />
+            </div>
+            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+              {problem.title}
+            </h1>
+            {isOwner && (
+              <EditProblemDialog
+                problem={problem}
+                onEdited={refresh}
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 rounded-lg text-slate-400 hover:text-slate-600"
+                  >
+                    <PencilIcon className="size-4" />
+                  </Button>
+                }
+              />
+            )}
           </div>
 
-          <div className="flex-1 rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 text-center shadow-2xs">
-            <p className="text-xs text-emerald-700 font-medium">제출 인원</p>
-            <p className="text-2xl font-extrabold text-emerald-700">{fullySubmittedStudentsCount}<span className="text-sm font-medium">명</span></p>
-          </div>
-
-          <div className="flex-1 rounded-xl border border-rose-200 bg-rose-50/50 px-4 py-3 text-center shadow-2xs">
-            <p className="text-xs text-rose-600 font-medium">미제출 인원</p>
-            <p className="text-2xl font-extrabold text-rose-600">{notSubmittedStudentsCount}<span className="text-sm font-medium">명</span></p>
-          </div>
-        </div>
-
-        {/* 범례 및 새로고침 */}
-        <div className="flex justify-between items-center pt-2">
-          <div className="flex items-center gap-5 text-xs text-slate-600 font-medium">
-            <span className="flex items-center gap-1.5"><CheckCircle2Icon className="size-4 text-emerald-500" /> 제출 완료(기한 내)</span>
-            <span className="flex items-center gap-1.5"><ClockIcon className="size-4 text-amber-500" /> 제출 늦음</span>
-            <span className="flex items-center gap-1.5"><XCircleIcon className="size-4 text-rose-500" /> 미제출</span>
-          </div>
-        </div>
-
-        {/* 데이터 테이블 영역 */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
-            <h2 className="font-semibold text-slate-800 text-sm">학생별 문제 풀이 현황</h2>
-            
-            <Button 
-              variant="outline" 
-              size="icon" 
-              onClick={fetchStatusData}
-              className="size-8 text-slate-500 hover:text-slate-700 bg-white"
-            >
-              <RotateCwIcon className="size-4" />
-            </Button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                <tr>
-                  <th className="py-3 px-6 font-semibold w-48">이름</th>
-                  <th className="py-3 px-6 font-semibold w-36">학번</th>
-                  {problemList.map((p) => (
-                    <th key={p.id} className="py-3 px-4 font-semibold text-center">
-                      <div className="text-slate-800">{p.title}</div>
-                    </th>
-                  ))}
-                  <th className="py-3 px-4 font-semibold text-center text-emerald-600">제출 완료</th>
-                  <th className="py-3 px-4 font-semibold text-center text-amber-500">제출 늦음</th>
-                  <th className="py-3 px-4 font-semibold text-center text-rose-500">미제출</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {studentList.map((student) => {
-                  const submittedCount = student.problems.filter((p) => p.status === 'SUBMITTED').length
-                  const lateCount = student.problems.filter((p) => p.status === 'LATE').length
-                  const notSubmittedCount = student.problems.filter((p) => p.status === 'NOT_SUBMITTED').length
-
-                  return (
-                    <tr key={student.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-4 px-6 font-medium text-slate-800">
-                        <div className="flex items-center gap-1.5">
-                          <span>{student.name}</span>
-                          <CopyIcon className="size-3 text-slate-400 cursor-pointer hover:text-slate-600" />
-                        </div>
-                        {student.ip && <div className="text-[10px] text-slate-400 mt-0.5">IP: {student.ip}</div>}
-                      </td>
-                      <td className="py-4 px-6 text-slate-600 font-mono">{student.studentId}</td>
-
-                      {/* 소문제별 상태 셀 */}
-                      {student.problems.map((prob) => renderStatusCell(prob))}
-
-                      <td className="py-4 px-4 text-center font-bold text-emerald-600">{submittedCount}</td>
-                      <td className="py-4 px-4 text-center font-bold text-amber-500">{lateCount}</td>
-                      <td className="py-4 px-4 text-center font-bold text-rose-500">{notSubmittedCount}</td>
-                    </tr>
+          {isOwner && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs font-semibold rounded-lg h-9 px-4 shadow-2xs"
+                onClick={() =>
+                  router.push(
+                    `/problem/${problem.problem_id}/status?groupId=${group?.group_id}`
                   )
-                })}
-                
-                {studentList.length === 0 && (
-                  <tr>
-                    <td colSpan={5 + problemList.length} className="py-8 text-center text-slate-500">
-                      현황 데이터가 존재하지 않습니다.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                }
+              >
+                <BarChart2Icon className="size-3.5" /> 현황보기
+              </Button>
+
+              <Button
+                size="sm"
+                className="bg-[#d97706] hover:bg-[#b45309] text-white gap-1.5 text-xs font-semibold rounded-lg h-9 px-4 shadow-2xs"
+                onClick={() =>
+                  router.push(
+                    `/submission?problemId=${problem.problem_id}&groupId=${group?.group_id}`
+                  )
+                }
+              >
+                <ClipboardCheckIcon className="size-3.5" /> 채점하기
+              </Button>
+
+              <Button
+                size="sm"
+                className="bg-[#10b981] hover:bg-[#059669] text-white gap-1.5 text-xs font-semibold rounded-lg h-9 px-4 shadow-2xs"
+                onClick={() => {
+                  const addBtn = document.getElementById(
+                    'add-question-trigger'
+                  )
+                  if (addBtn) addBtn.click()
+                }}
+              >
+                <PlusIcon className="size-3.5" /> 문제 추가하기
+              </Button>
+            </div>
+          )}
         </div>
-      </main>
+
+        {/* 상단 검색 바 */}
+        <div className="relative w-full">
+          <SearchIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="검색하기..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 bg-white shadow-2xs placeholder:text-slate-400"
+          />
+        </div>
+
+        {/* 소문제 목록 */}
+        {group && (
+          <QuestionList
+            problemId={problem.problem_id}
+            groupId={group.group_id}
+            isOwner={isOwner}
+            searchTerm={searchTerm}
+          />
+        )}
+      </div>
     </div>
   )
 }
 
-export default function SubmissionStatusPage() {
+export default function ProblemPage() {
   return (
-    <Suspense fallback={<Skeleton className="h-20 w-full" />}>
+    <Suspense fallback={<Skeleton className="h-8 w-full" />}>
       <GroupProvider>
         <ProblemProvider>
-          <SubmissionStatusContent />
+          <ProblemPageContent />
         </ProblemProvider>
       </GroupProvider>
     </Suspense>
