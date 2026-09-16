@@ -17,6 +17,9 @@ interface ColabCell {
   source: string
   outputs_text: string[]
   outputs_images: string[]
+  // 🟢 [신규] 지금까지 빠져있던 두 가지 출력 타입
+  outputs_html: string[]
+  outputs_errors: { ename: string; evalue: string; traceback: string[] }[]
 }
 
 // 🟢 [추가] Colab 노트북 셀들을 순서대로 렌더링
@@ -30,31 +33,67 @@ function ColabCellsViewer({ cells }: { cells: ColabCell[] }) {
   }
   return (
     <div className="absolute inset-0 overflow-auto bg-white p-4 space-y-3">
-      {cells.map((cell, idx) => (
-        <div key={idx} className="rounded-lg border border-slate-200 overflow-hidden">
-          {cell.cell_type === 'markdown' ? (
-            <div className="p-3 bg-slate-50 text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
-              {cell.source || <span className="text-slate-400">(빈 마크다운 셀)</span>}
-            </div>
-          ) : (
-            <>
-              <div className="bg-slate-900 text-slate-100 font-mono text-xs p-3 overflow-x-auto">
-                <pre className="whitespace-pre-wrap"><code>{cell.source || '(빈 코드 셀)'}</code></pre>
+      {cells.map((cell, idx) => {
+        const hasErrors = (cell.outputs_errors?.length ?? 0) > 0
+        const hasHtml = (cell.outputs_html?.length ?? 0) > 0
+        const hasText = cell.outputs_text.length > 0
+        const hasImages = cell.outputs_images.length > 0
+
+        return (
+          <div key={idx} className="rounded-lg border border-slate-200 overflow-hidden">
+            {cell.cell_type === 'markdown' ? (
+              <div className="p-3 bg-slate-50 text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
+                {cell.source || <span className="text-slate-400">(빈 마크다운 셀)</span>}
               </div>
-              {(cell.outputs_text.length > 0 || cell.outputs_images.length > 0) && (
-                <div className="border-t border-slate-200 bg-white p-3 space-y-2">
-                  {cell.outputs_text.map((text, tIdx) => (
-                    <pre key={tIdx} className="text-[11px] font-mono text-slate-700 whitespace-pre-wrap leading-relaxed">{text}</pre>
-                  ))}
-                  {cell.outputs_images.map((img, iIdx) => (
-                    <img key={iIdx} src={`data:image/png;base64,${img}`} alt={`셀 ${idx + 1} 출력 이미지 ${iIdx + 1}`} className="max-w-full rounded border border-slate-200" />
-                  ))}
+            ) : (
+              <>
+                <div className="bg-slate-900 text-slate-100 font-mono text-xs p-3 overflow-x-auto">
+                  <pre className="whitespace-pre-wrap"><code>{cell.source || '(빈 코드 셀)'}</code></pre>
                 </div>
-              )}
-            </>
-          )}
-        </div>
-      ))}
+                {(hasErrors || hasHtml || hasText || hasImages) && (
+                  <div className="border-t border-slate-200 bg-white p-3 space-y-2">
+                    {/* 🟢 [신규] 에러(예외) 출력 - 눈에 띄게 빨간 박스로 표시 */}
+                    {cell.outputs_errors?.map((err, eIdx) => (
+                      <div key={`err-${eIdx}`} className="rounded-md border border-rose-200 bg-rose-50 p-2.5 space-y-1">
+                        <p className="text-[11px] font-bold text-rose-700">
+                          {err.ename}: {err.evalue}
+                        </p>
+                        {err.traceback?.length > 0 && (
+                          <pre className="text-[10px] font-mono text-rose-600 whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                            {err.traceback.join('\n')}
+                          </pre>
+                        )}
+                      </div>
+                    ))}
+
+                    {cell.outputs_text.map((text, tIdx) => (
+                      <pre key={tIdx} className="text-[11px] font-mono text-slate-700 whitespace-pre-wrap leading-relaxed">{text}</pre>
+                    ))}
+
+                    {/* 🟢 [신규] pandas DataFrame 표, plotly 등 리치 HTML 출력.
+                        학생이 작성한 콘텐츠라 안전하게 샌드박스 iframe 안에서만 렌더링
+                        (allow-same-origin을 주지 않아 부모 페이지/쿠키에 접근 불가) */}
+                    {cell.outputs_html?.map((html, hIdx) => (
+                      <div key={`html-${hIdx}`} className="rounded-md border border-slate-200 overflow-hidden">
+                        <iframe
+                          srcDoc={html}
+                          title={`셀 ${idx + 1} HTML 출력 ${hIdx + 1}`}
+                          className="w-full h-56 border-0 bg-white"
+                          sandbox="allow-scripts"
+                        />
+                      </div>
+                    ))}
+
+                    {cell.outputs_images.map((img, iIdx) => (
+                      <img key={iIdx} src={`data:image/png;base64,${img}`} alt={`셀 ${idx + 1} 출력 이미지 ${iIdx + 1}`} className="max-w-full rounded border border-slate-200" />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
