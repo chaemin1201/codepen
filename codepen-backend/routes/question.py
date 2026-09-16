@@ -180,6 +180,10 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
     )
 
 
+# 🟢 [신규] Jupyter 에러 트레이스백에 섞여 있는 터미널 색상 코드(ANSI escape)를 제거하기 위한 정규식
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def make_safe_filename(filename: str) -> str:
     """Storage 키로 안전하게 쓸 수 있도록 파일명을 정제한다.
     한글, 공백, 특수문자를 제거하고 확장자는 보존한다."""
@@ -554,21 +558,42 @@ async def get_question_attempt_colab_snapshot(
             cell_type = cell.get("cell_type", "code")
             outputs_text = []
             outputs_images = []
+            # 🟢 [신규] 지금까지 빠져있던 두 가지 출력 타입 보완
+            outputs_html = []    # pandas DataFrame 표, plotly 등 리치 HTML 출력
+            outputs_errors = []  # 셀 실행 중 에러(예외) 발생 시 트레이스백
+
             for out in cell.get("outputs", []):
+                output_type = out.get("output_type")
                 data = out.get("data", {})
+
                 if "text/plain" in data:
                     text = data["text/plain"]
                     outputs_text.append("".join(text) if isinstance(text, list) else str(text))
+                if "text/html" in data:
+                    html = data["text/html"]
+                    outputs_html.append("".join(html) if isinstance(html, list) else str(html))
                 if "image/png" in data:
                     outputs_images.append(data["image/png"])
-                if out.get("output_type") == "stream":
+                if output_type == "stream":
                     text = out.get("text", [])
                     outputs_text.append("".join(text) if isinstance(text, list) else str(text))
+                if output_type == "error":
+                    # 트레이스백엔 터미널 색상용 ANSI 이스케이프 코드가 섞여 있어서 제거
+                    raw_traceback = out.get("traceback", [])
+                    clean_traceback = [_ANSI_ESCAPE_RE.sub("", line) for line in raw_traceback]
+                    outputs_errors.append({
+                        "ename": out.get("ename", "Error"),
+                        "evalue": out.get("evalue", ""),
+                        "traceback": clean_traceback,
+                    })
+
             cells.append({
                 "cell_type": cell_type,
                 "source": source,
                 "outputs_text": outputs_text,
                 "outputs_images": outputs_images,
+                "outputs_html": outputs_html,
+                "outputs_errors": outputs_errors,
             })
 
         return {"cells": cells}
@@ -887,7 +912,7 @@ async def submit_question(
                     file=zip_buffer.getvalue(),
                     file_options={"content-type": "application/zip", "upsert": "true"}
                 )
-                print(f"✅ [Snapshot] 학생이 작성한 코드로 ZIP 저장 완료: {file_key}")
+                print(f"✅ [자체 에디터 Snapshot] 학생이 작성한 코드로 ZIP 저장 완료: {file_key}")
         except Exception as e:
             # 🟢 [수정] 파일 저장이 실패하면 여기서 끝냅니다. QuestionAttempt는 아직 손대지
             # 않았으니(아래에서 저장 성공 후에만 기록), "제출 기록만 남고 파일은 없는" 상태가

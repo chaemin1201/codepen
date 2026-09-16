@@ -250,7 +250,15 @@ function IndividualSubmissionContent() {
           setReason(currentReason)
         }
 
-        if (mergedData.status === 'SUBMITTED' || mergedData.codepen_url) {
+        // 🟢 [수정] 자체 에디터(inhouse) 제출은 codepen_url을 아예 안 보내서 null인데,
+        // 이 조건이 codepen_url 유무로만 판단해서 자체 에디터 제출물은 코드를 영영
+        // 안 불러오고 있었습니다. attempts_count > 0(실제 제출 횟수)도 함께 확인합니다.
+        const hasSubmitted =
+          mergedData.status === 'SUBMITTED' ||
+          !!mergedData.codepen_url ||
+          Number(mergedData.attempts_count || 0) > 0
+
+        if (hasSubmitted) {
           setIsLoadingCode(true)
           try {
             if (isColab) {
