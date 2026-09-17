@@ -11,8 +11,8 @@ import { useMe } from '@/context/me-provider'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 
-interface ProblemColumn {
-  problem_id: number
+interface CategoryColumn {
+  category_id: number | null
   title: string
   max_score: number
 }
@@ -21,7 +21,7 @@ interface StudentGradeRow {
   user_id: string
   username: string | null
   student_no: string | number | null
-  problems: { problem_id: number; title: string; score: number; max_score: number }[]
+  categories: { category_id: number | null; title: string; score: number; max_score: number }[]
   total_score: number
   total_max_score: number
 }
@@ -42,7 +42,7 @@ function GroupGradesContent() {
 
   const groupId = searchParams.get('groupId') || (group ? String(group.group_id) : '')
 
-  const [problems, setProblems] = useState<ProblemColumn[]>([])
+  const [categories, setCategories] = useState<CategoryColumn[]>([])
   const [students, setStudents] = useState<StudentGradeRow[]>([])
   const [totalMaxScore, setTotalMaxScore] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -59,7 +59,7 @@ function GroupGradesContent() {
         throw new Error(data.error || '성적을 불러오지 못했습니다.')
       }
       const data = await res.json()
-      setProblems(data.problems || [])
+      setCategories(data.categories || [])
       setStudents(data.students || [])
       setTotalMaxScore(data.total_max_score || 0)
     } catch (e: any) {
@@ -120,8 +120,8 @@ function GroupGradesContent() {
             <div className="p-12"><Skeleton className="h-[400px] w-full rounded-xl" /></div>
           ) : error ? (
             <div className="p-12 text-center text-rose-500 font-medium text-sm">{error}</div>
-          ) : problems.length === 0 ? (
-            <div className="p-12 text-center text-slate-400 text-sm">등록된 문제지가 없습니다.</div>
+          ) : categories.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 text-sm">등록된 항목(주차)이 없습니다.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
@@ -131,10 +131,10 @@ function GroupGradesContent() {
                     <th className="py-3 px-6 w-32">이름</th>
                     <th className="py-3 px-6 w-28">학번</th>
                     <th className="py-3 px-6 text-center w-32">총점</th>
-                    {problems.map((p) => (
-                      <th key={p.problem_id} className="py-3 px-4 text-center min-w-[100px]">
-                        <div className="text-slate-800 truncate max-w-[140px] mx-auto" title={p.title}>{p.title}</div>
-                        <div className="text-[10px] text-slate-400 font-normal">(배점: {p.max_score}점)</div>
+                    {categories.map((c) => (
+                      <th key={c.category_id ?? 'uncategorized'} className="py-3 px-4 text-center min-w-[100px]">
+                        <div className="text-slate-800 truncate max-w-[140px] mx-auto" title={c.title}>{c.title}</div>
+                        <div className="text-[10px] text-slate-400 font-normal">(배점: {c.max_score}점)</div>
                       </th>
                     ))}
                   </tr>
@@ -151,10 +151,10 @@ function GroupGradesContent() {
                           <span className="text-slate-400 font-normal">/ {totalMaxScore}</span>
                         </span>
                       </td>
-                      {student.problems.map((p) => (
-                        <td key={p.problem_id} className="py-3 px-4 text-center font-mono">
-                          <span className={getScoreColorClass(p.score, p.max_score)}>{p.score}</span>
-                          <span className="text-slate-300"> / {p.max_score}</span>
+                      {student.categories.map((c) => (
+                        <td key={c.category_id ?? 'uncategorized'} className="py-3 px-4 text-center font-mono">
+                          <span className={getScoreColorClass(c.score, c.max_score)}>{c.score}</span>
+                          <span className="text-slate-300"> / {c.max_score}</span>
                         </td>
                       ))}
                     </tr>
@@ -162,7 +162,7 @@ function GroupGradesContent() {
 
                   {students.length === 0 && (
                     <tr>
-                      <td colSpan={4 + problems.length} className="py-12 text-center text-slate-400">
+                      <td colSpan={4 + categories.length} className="py-12 text-center text-slate-400">
                         등록된 학생이 없습니다.
                       </td>
                     </tr>

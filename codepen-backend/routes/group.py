@@ -1,29 +1,28 @@
-import os
-import secrets
-from datetime import datetime, timezone
-from pathlib import Path
-
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Response, Depends
 from pydantic import BaseModel
-from sqlmodel import Session, and_, delete, or_, select
-
+from sqlmodel import Session, select, and_, or_
+from datetime import datetime, timezone
 from db import engine
-from models.category import Category
+import os
+from models.user import User, UserRole
+from models.problem import Problem, ProblemResponse, create_problem_response
 from models.group import Group
 from models.group_member import GroupMember
+from models.submission import Submission
 from models.invite_queue import InviteQueue
-from models.problem import Problem, ProblemResponse, create_problem_response
+from utils.user import login_required
+import secrets 
+from pathlib import Path
+from sqlmodel import delete
 from models.question import Question
 from models.question_attempt import QuestionAttempt
-from models.user import User, UserRole
-from utils.user import login_required
+from models.category import Category
 
 
 class PartialGroup(BaseModel):
     name: str
     description: str | None = None
-    platform: str = "codepen"   # 🟢 "codepen" 또는 "colab", 기본값 codepen
-
+    platform: str = "codepen"   # 🟢 [추가] "codepen" 또는 "colab", 기본값 codepen
 
 class GroupMemberResponse(BaseModel):
     user_id: str
@@ -38,7 +37,7 @@ class GroupMemberResponse(BaseModel):
     position: str | None = None
     office: str | None = None
     created_at: str
-    joined_at: str  # 계정 생성일이 아니라 "이 그룹에" 가입한 날짜
+    joined_at: str  # [신규] 계정 생성일이 아니라 "이 그룹에" 가입한 날짜
 
 
 class GroupResponse(BaseModel):
@@ -48,7 +47,7 @@ class GroupResponse(BaseModel):
     description: str | None
     owner_id: str
     created_at: str
-    platform: str
+    platform: str   # 🟢 [추가]
     owner: User
     members: list[GroupMemberResponse]
     problems: list[Problem | ProblemResponse]
@@ -111,7 +110,7 @@ def get_group_response(group: Group, session: Session, user_id: str) -> GroupRes
         description=group.description,
         owner_id=group.owner_id,
         created_at=group.created_at.isoformat() if group.created_at else "",
-        platform=group.platform,
+        platform=group.platform,   # 🟢 [추가]
         owner=owner,
         members=list(members),
         problems=list(problems),
@@ -121,6 +120,7 @@ def get_group_response(group: Group, session: Session, user_id: str) -> GroupRes
 router = APIRouter(prefix="/group")
 
 
+# move this specifically to top so it precedes the other routes
 @router.get("/invites")
 async def get_current_user_invites(
     response: Response, current_user: User = Depends(login_required)
@@ -163,6 +163,7 @@ async def create_group(
     current_user: User = Depends(login_required),
 ):
     with Session(engine) as session:
+        # 6글자 대신 예측 불가한 안전한 코드로 변경
         invite_code = secrets.token_urlsafe(16)
 
         new_group = Group(
@@ -170,7 +171,7 @@ async def create_group(
             description=group.description,
             owner_id=current_user.user_id,
             invite_code=invite_code,
-            platform=group.platform,
+            platform=group.platform,   # 🟢 [추가]
         )
         session.add(new_group)
         session.commit()
@@ -202,13 +203,13 @@ async def update_group(
 
         existing_group.group_name = group.name
         existing_group.description = group.description
+        # 🟢 [추가] 이미 문제가 하나라도 있는 그룹은 플랫폼 변경 막기 (데이터 일관성 보호)
         if not existing_group.problems:
             existing_group.platform = group.platform
         session.add(existing_group)
         session.commit()
         session.refresh(existing_group)
         return get_group_response(existing_group, session, current_user.user_id)
-
 
 @router.get("/{group_id}")
 async def get_group(
@@ -242,12 +243,18 @@ async def delete_group(
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
 
-        # 1. 외래키 제약조건 순서에 따라 자식 테아블 데이터 삭제
+        # 1. 데이터베이스 연관 데이터 직접 삭제 (SQL 쿼리 방식)
+        # 🟢 [수정] 삭제 순서가 중요합니다 — "자식(참조하는 쪽)"을 먼저 지우고 "부모"를 나중에 지워야
+        # DB의 외래키 제약(FK constraint)에 안 걸립니다. 원래 코드는 Question과 Category를
+        # 지우지 않아서, 소문제나 항목이 하나라도 있으면 그룹 삭제 자체가 실패했습니다.
         session.exec(delete(InviteQueue).where(InviteQueue.group_id == group_id))
         session.exec(delete(GroupMember).where(GroupMember.group_id == group_id))
 
+        # 문제 및 제출물도 직접 깔끔하게 삭제
         problem_ids = [p.problem_id for p in group.problems]
         if problem_ids:
+            # 🟢 [수정] Question -> QuestionAttempt 순서로 먼저 지워야
+            # 뒤이어 Problem을 지울 때 "아직 나를 참조하는 Question이 있다"는 에러가 안 납니다.
             question_ids = [
                 q.question_id
                 for q in session.exec(
@@ -260,16 +267,17 @@ async def delete_group(
                 )
                 session.exec(delete(Question).where(Question.problem_id.in_(problem_ids)))
 
-            # 🟢 [수정] Submission 삭제 구문 제거 (더 이상 사용하지 않는 모델)
+            session.exec(delete(Submission).where(Submission.problem_id.in_(problem_ids)))
             session.exec(delete(Problem).where(Problem.group_id == group_id))
 
+        # 🟢 [수정] 빠져있던 부분: 그룹의 항목(Category)들도 그룹을 지우기 전에 반드시 삭제
         session.exec(delete(Category).where(Category.group_id == group_id))
 
         # 2. 그룹 삭제
         session.delete(group)
         session.commit()
         return {"message": "Group deleted successfully"}
-
+        
 
 @router.put("/{group_id}/members/{user_id}")
 async def add_member_to_group(
@@ -374,7 +382,13 @@ async def set_group_grader(
 async def get_group_attendance(
     group_id: int, response: Response, current_user: User = Depends(login_required)
 ):
-    """학생별 '출석률' - 그룹 전체 문제지 중 몇 개를 제출했는지 대략적인 비율입니다."""
+    """학생별 '출석률' - 그룹 전체 문제지 중 몇 개를 제출했는지 대략적인 비율입니다.
+
+    🟢 [수정] 예전엔 옛날 Submission 테이블(status=='submitted')을 봤는데,
+    지금 실제 제출 흐름(/api/question/{id}/submit)은 QuestionAttempt 테이블에만 기록돼서
+    Submission 테이블은 항상 비어있었습니다. 그래서 학생이 문제를 다 풀어도 출석률이
+    항상 0으로 나왔습니다. QuestionAttempt 기준으로 다시 계산합니다.
+    """
     with Session(engine) as session:
         group = session.get(Group, group_id)
         if not group:
@@ -386,6 +400,7 @@ async def get_group_attendance(
 
         total_problems = len(group.problems)
 
+        # 문제지(Problem)별 소문제(Question) id 목록 매핑
         problem_ids = [p.problem_id for p in group.problems]
         questions = session.exec(
             select(Question).where(Question.problem_id.in_(problem_ids))
@@ -393,6 +408,7 @@ async def get_group_attendance(
 
         question_id_to_problem_id = {q.question_id: q.problem_id for q in questions}
 
+        # 이 그룹의 모든 QuestionAttempt 중, 실제로 제출 흔적이 있는(attempts_count > 0) 것만
         all_question_ids = list(question_id_to_problem_id.keys())
         attempts = session.exec(
             select(QuestionAttempt).where(
@@ -401,6 +417,7 @@ async def get_group_attendance(
             )
         ).all() if all_question_ids else []
 
+        # user_id -> 그 학생이 제출 흔적을 남긴 problem_id 집합 (소문제 하나라도 제출했으면 그 문제지는 '제출'로 카운트)
         user_submitted_problem_ids: dict[str, set[int]] = {}
         for a in attempts:
             pid = question_id_to_problem_id.get(a.question_id)
@@ -423,6 +440,8 @@ async def get_group_attendance(
         return result
 
 
+# 🟢 [신규] 교수용 - 그룹 전체 성적을 학생 x 문제지 매트릭스로 한눈에 보여줍니다.
+# 문제지별 점수 = 그 문제지에 속한 소문제들의 professor_score 합계.
 @router.get("/{group_id}/grades")
 async def get_group_grades(
     group_id: int, response: Response, current_user: User = Depends(login_required)
@@ -436,68 +455,85 @@ async def get_group_grades(
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
 
-        problems = session.exec(
-            select(Problem).where(Problem.group_id == group_id).order_by(Problem.created_at)
+        # 🟢 [수정] "문제지 단위" 대신 "카테고리(주차) 단위"로 합산합니다.
+        # Category.starts_at이 "주차 시작일"이라, 그 순서대로 정렬해서 보여줍니다
+        # (없는 카테고리는 맨 뒤로).
+        categories = session.exec(
+            select(Category).where(Category.group_id == group_id)
         ).all()
+        categories_sorted = sorted(
+            categories, key=lambda c: (c.starts_at is None, c.starts_at)
+        )
+
+        problems = session.exec(
+            select(Problem).where(Problem.group_id == group_id)
+        ).all()
+        problem_to_category: dict[int, int | None] = {p.problem_id: p.category_id for p in problems}
         problem_ids = [p.problem_id for p in problems]
 
         questions = session.exec(
             select(Question).where(Question.problem_id.in_(problem_ids))
         ).all() if problem_ids else []
 
-        question_id_to_problem: dict[int, int] = {}
-        problem_max_score: dict[int, int] = {}
+        question_id_to_category: dict[int, int | None] = {}
+        category_max_score: dict[int | None, int] = {}
         for q in questions:
-            question_id_to_problem[q.question_id] = q.problem_id
-            problem_max_score[q.problem_id] = problem_max_score.get(q.problem_id, 0) + (q.score or 0)
+            cid = problem_to_category.get(q.problem_id)
+            question_id_to_category[q.question_id] = cid
+            category_max_score[cid] = category_max_score.get(cid, 0) + (q.score or 0)
 
-        all_question_ids = list(question_id_to_problem.keys())
+        all_question_ids = list(question_id_to_category.keys())
         attempts = session.exec(
             select(QuestionAttempt).where(QuestionAttempt.question_id.in_(all_question_ids))
         ).all() if all_question_ids else []
 
-        user_problem_scores: dict[str, dict[int, float]] = {}
+        # user_id -> category_id -> 점수 합계 (채점 안 된 문항은 0으로 취급)
+        user_category_scores: dict[str, dict[int | None, float]] = {}
         for a in attempts:
             if a.professor_score is None:
                 continue
-            pid = question_id_to_problem.get(a.question_id)
-            if pid is None:
-                continue
-            per_user = user_problem_scores.setdefault(str(a.user_id), {})
-            per_user[pid] = per_user.get(pid, 0) + a.professor_score
+            cid = question_id_to_category.get(a.question_id)
+            per_user = user_category_scores.setdefault(str(a.user_id), {})
+            per_user[cid] = per_user.get(cid, 0) + a.professor_score
 
-        total_max_score = sum(problem_max_score.values())
+        # 카테고리가 아예 없는(미분류) 문제지가 있으면 "미분류" 칸을 맨 뒤에 추가
+        category_columns = [
+            {"category_id": c.category_id, "title": c.title, "max_score": category_max_score.get(c.category_id, 0)}
+            for c in categories_sorted
+        ]
+        if None in category_max_score and category_max_score[None] > 0:
+            category_columns.append({"category_id": None, "title": "미분류", "max_score": category_max_score[None]})
+
+        total_max_score = sum(category_max_score.values())
 
         students = []
         for member in group.members:
             if member.user_id == group.owner_id:
                 continue
-            per_user_scores = user_problem_scores.get(str(member.user_id), {})
-            problem_rows = [
+            per_user_scores = user_category_scores.get(str(member.user_id), {})
+            category_rows = [
                 {
-                    "problem_id": p.problem_id,
-                    "title": p.title,
-                    "score": per_user_scores.get(p.problem_id, 0),
-                    "max_score": problem_max_score.get(p.problem_id, 0),
+                    "category_id": col["category_id"],
+                    "title": col["title"],
+                    "score": per_user_scores.get(col["category_id"], 0),
+                    "max_score": col["max_score"],
                 }
-                for p in problems
+                for col in category_columns
             ]
             students.append({
                 "user_id": member.user_id,
                 "username": getattr(member, "username", None),
                 "student_no": getattr(member, "student_no", None),
-                "problems": problem_rows,
+                "categories": category_rows,
                 "total_score": sum(per_user_scores.values()),
                 "total_max_score": total_max_score,
             })
 
+        # 총점 높은 순 정렬
         students.sort(key=lambda s: s["total_score"], reverse=True)
 
         return {
-            "problems": [
-                {"problem_id": p.problem_id, "title": p.title, "max_score": problem_max_score.get(p.problem_id, 0)}
-                for p in problems
-            ],
+            "categories": category_columns,
             "total_max_score": total_max_score,
             "students": students,
         }
@@ -513,6 +549,8 @@ async def get_group_members(
             response.status_code = 404
             return {"error": "Group not found"}
 
+        # [FIX-IDOR] 그룹 멤버/오너가 아니어도 group_id만 알면 멤버 목록을 볼 수 있었음.
+        # 다른 엔드포인트(get_group 등)와 동일하게 접근 권한 체크 추가.
         is_member = current_user.user_id in [m.user_id for m in group.members]
         if not is_member and current_user.user_id != group.owner_id:
             response.status_code = 403
@@ -549,7 +587,17 @@ async def remove_member_from_group(
             return {"error": "Group member not found"}
 
         session.delete(group_member)
-        # 🟢 [수정] Submission 모델 데이터 삭제 루프 제거
+
+        submissions = session.exec(
+            select(Submission)
+            .join(Problem)
+            .where(
+                Problem.group_id == group_id,
+                Submission.user_id == user_id,
+            )
+        ).all()
+        for submission in submissions:
+            session.delete(submission)
         session.commit()
         return {"message": "User removed from group successfully"}
 
