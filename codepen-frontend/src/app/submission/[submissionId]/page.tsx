@@ -429,13 +429,13 @@ function IndividualSubmissionContent() {
         </div>
 
         <div className="flex items-center gap-3">
+          <span className="text-slate-400 font-mono">
+            Submission ID
+          </span>
+          <span className="text-slate-300">|</span>
           <span className="flex items-center gap-1.5 text-slate-700 font-bold">
             {studentName}
             <span className="text-slate-400 font-mono font-normal">({studentNo})</span>
-          </span>
-          <span className="text-slate-300">|</span>
-          <span className="text-slate-400 font-mono">
-            Submission ID: {submission?.submission_id || submission?.id || searchParams.get('submissionId') || '-'}
           </span>
         </div>
       </header>

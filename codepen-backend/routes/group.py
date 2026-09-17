@@ -476,11 +476,16 @@ async def get_group_grades(
 
         total_max_score = sum(category_max_score.values())
 
+        # 🟢 [수정] group.members(관계)에서 .user로 접근하는 대신, /students 엔드포인트에서
+        # 이미 검증된 방식대로 User와 GroupMember를 직접 JOIN해서 가져옵니다.
+        roster = session.exec(
+            select(User).join(GroupMember, GroupMember.user_id == User.user_id)
+            .where(GroupMember.group_id == group_id, User.user_id != group.owner_id)
+        ).all()
+
         students = []
-        for member in group.members:
-            if member.user_id == group.owner_id:
-                continue
-            per_user_scores = user_category_scores.get(str(member.user_id), {})
+        for user in roster:
+            per_user_scores = user_category_scores.get(str(user.user_id), {})
             category_rows = [
                 {
                     "category_id": col["category_id"],
@@ -491,9 +496,9 @@ async def get_group_grades(
                 for col in category_columns
             ]
             students.append({
-                "user_id": member.user_id,
-                "username": getattr(member, "username", None),
-                "student_no": getattr(member, "student_no", None),
+                "user_id": user.user_id,
+                "username": user.username,
+                "student_no": user.student_no,
                 "categories": category_rows,
                 "total_score": sum(per_user_scores.values()),
                 "total_max_score": total_max_score,
