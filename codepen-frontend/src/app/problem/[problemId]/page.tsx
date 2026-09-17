@@ -31,7 +31,6 @@ import { Header } from '@/components/header'
 import { GroupProvider, useGroup } from '@/context/group-provider'
 import { ProblemProvider, useProblem } from '@/context/problem-provider'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useSubmission } from '@/lib/useSubmission'
 import { useGroupOwner } from '@/lib/useGroupOwner'
 import { useCategories } from '@/lib/useCategories'
 import { useMe } from '@/context/me-provider'
@@ -691,17 +690,10 @@ function ProblemPageContent() {
   const { group } = useGroup()
   const { problem, refresh } = useProblem()
   const { categories } = useCategories(group?.group_id ?? null)
-  const { submission, isLoading, error, mutate } = useSubmission(
-    problem?.problem_id ?? 0
-  )
   const isOwner = useGroupOwner()
   const [searchTerm, setSearchTerm] = React.useState('')
 
-  if (!problem || isLoading) return <Skeleton className="h-8 w-full" />
-  if (error) {
-    toast.error('문제를 불러오는 중 오류가 발생했습니다.')
-    return null
-  }
+  if (!problem) return <Skeleton className="h-8 w-full" />
 
   const category = categories?.find(
     (c) => c.category_id === problem.category_id
