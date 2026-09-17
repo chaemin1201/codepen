@@ -254,7 +254,7 @@
 #         await p.stop()
 
 import io
-from models.submission import Submission
+from typing import Any
 
 # =====================================================================
 # [Deprecated] CodePen 스크래핑 모듈 (더미화)
@@ -267,11 +267,11 @@ async def get_codepen_zip_url(codepen_url: str) -> str:
     """사용 안 함"""
     return ""
 
-async def download_codepen(submission: Submission):
+async def download_codepen(submission: Any = None):
     """사용 안 함 (프론트엔드 전송 방식으로 대체)"""
     pass
 
-async def scrap_codepen(submission) -> io.BytesIO | None:
+async def scrap_codepen(submission: Any = None) -> io.BytesIO | None:
     """사용 안 함 (routes/question.py 에서 프론트엔드 데이터를 받아 직접 ZIP을 생성함)"""
     return None
 
@@ -283,7 +283,7 @@ async def scrap_codepen(submission) -> io.BytesIO | None:
 async def initialize_codepen():
     pass
 
-async def create_codepen(submission: Submission) -> str:
+async def create_codepen(submission: Any = None) -> str:
     return ""
 
 async def refresh_codepen_auth():

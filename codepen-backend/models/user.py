@@ -1,13 +1,12 @@
 from datetime import datetime, timezone
-from sqlmodel import Field, SQLModel, Relationship
-from sqlalchemy import Column, DateTime
-from typing import TYPE_CHECKING
 from enum import Enum
+from typing import TYPE_CHECKING
+from sqlalchemy import Column, DateTime
+from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from .group import Group
     from .group_member import GroupMember
-    from .submission import Submission
     from .invite_queue import InviteQueue
 
 
@@ -42,5 +41,4 @@ class User(SQLModel, table=True):
 
     owned_groups: list["Group"] = Relationship(back_populates="owner")
     groups: list["GroupMember"] = Relationship(back_populates="user")
-    submissions: list["Submission"] = Relationship(back_populates="user")
     invite_queues: list["InviteQueue"] = Relationship(back_populates="user")

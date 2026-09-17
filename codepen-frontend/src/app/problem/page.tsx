@@ -11,7 +11,8 @@ import {
   CalendarIcon,
   ClockIcon,
   Trash2Icon,
-  UserCheckIcon
+  UserCheckIcon,
+  TrophyIcon
 } from 'lucide-react'
 
 import { Header } from '@/components/header'
@@ -375,7 +376,7 @@ function IntegratedGroupPageContent() {
     <RefreshCw className='size-4' />
   </Button>
 
-  {/* 3. 그룹 설정 & 4. 문제지 생성하기 (isOwner일 때만 표시) */}
+  {/* 3. 그룹 설정 & 성적 조회 & 문제지 생성하기 (isOwner일 때만 표시) */}
   {isOwner && (
     <>
       <Button 
@@ -385,6 +386,16 @@ function IntegratedGroupPageContent() {
         title='그룹 설정'
       >
         <Settings className='size-4' />
+      </Button>
+
+      {/* 🟢 [신규] 성적 조회 - 학생 x 문제지 전체 성적을 한 화면에서 보기 */}
+      <Button
+        size='icon'
+        className='rounded-xl bg-[#d97706] hover:bg-[#b45309] text-white size-9 shadow-2xs transition-colors'
+        onClick={() => router.push(`/grades?groupId=${group.group_id}`)}
+        title='성적 조회'
+      >
+        <TrophyIcon className='size-4' />
       </Button>
 
       <Button 
@@ -652,7 +663,7 @@ function IntegratedGroupPageContent() {
                 placeholder='이름을 입력하세요'
                 value={newCatTitle}
                 onChange={(e) => setNewCatTitle(e.target.value)}
-                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
+                className='w-full bg-background text-foreground border-input focus-visible:ring-1 focus-visible:ring-ring focus:outline-none rounded-xl h-11 px-3.5'
               />
             </div>
             <div className='flex flex-col gap-1.5'>
@@ -664,7 +675,7 @@ function IntegratedGroupPageContent() {
                 type='date'
                 value={newCatStartDate}
                 onChange={(e) => setNewCatStartDate(e.target.value)}
-                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
+                className='w-full bg-background text-foreground border-input focus-visible:ring-1 focus-visible:ring-ring focus:outline-none rounded-xl h-11 px-3.5'
               />
               <p className='text-[11px] text-[#868C88] px-0.5'>
                 입력하면 7일 뒤가 자동으로 종료일이 되고, 이 기간 안에 제출한 문제지는 &quot;제출&quot;로, 기간이 지난 뒤 제출하면 얼마나 늦었는지와 함께 &quot;제출 늦음&quot;으로 표시돼요.
@@ -703,7 +714,7 @@ function IntegratedGroupPageContent() {
                 placeholder='문제지 제목을 입력하세요'
                 value={newProblemTitle}
                 onChange={(e) => setNewProblemTitle(e.target.value)}
-                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
+                className='w-full bg-background text-foreground border-input focus-visible:ring-1 focus-visible:ring-ring focus:outline-none rounded-xl h-11 px-3.5'
               />
             </div>
             <div className='flex flex-col gap-1.5'>
@@ -714,14 +725,14 @@ function IntegratedGroupPageContent() {
                 value={newProblemDescription}
                 onChange={(e) => setNewProblemDescription(e.target.value)}
                 rows={3}
-                className='w-full bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl resize-none p-3.5 text-sm'
+                className='w-full bg-background text-foreground border-input focus-visible:ring-1 focus-visible:ring-ring focus:outline-none rounded-xl resize-none p-3.5 text-sm'
               />
             </div>
             <div className='flex flex-col gap-1.5'>
               <Label htmlFor='prob-cat' className='text-xs font-bold text-[#173A23] px-0.5'>등록할 항목 선택</Label>
               <select
                 id='prob-cat'
-                className='w-full border border-[#EBF1F4] rounded-xl h-11 px-3.5 text-sm bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
+                className='w-full border border-[#EBF1F4] rounded-xl h-11 px-3.5 text-sm bg-background focus:outline-none focus-visible:ring-1 focus-visible:ring-ring'
                 value={newProblemTargetCat}
                 onChange={(e) => setNewProblemTargetCat(e.target.value)}
               >
@@ -747,12 +758,12 @@ function IntegratedGroupPageContent() {
                   type='date'
                   value={newProblemStartDate}
                   onChange={(e) => setNewProblemStartDate(e.target.value)}
-                  className='flex-1 bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
+                  className='flex-1 bg-background text-foreground border-input focus-visible:ring-1 focus-visible:ring-ring focus:outline-none rounded-xl h-11 px-3.5'
                 />
                 <select
                   value={newProblemStartHour}
                   onChange={(e) => setNewProblemStartHour(e.target.value)}
-                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-1 focus-visible:ring-ring'
                 >
                   {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map((h) => (
                     <option key={h} value={h}>{h}</option>
@@ -761,7 +772,7 @@ function IntegratedGroupPageContent() {
                 <select
                   value={newProblemStartMinute}
                   onChange={(e) => setNewProblemStartMinute(e.target.value)}
-                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-1 focus-visible:ring-ring'
                 >
                   {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map((m) => (
                     <option key={m} value={m}>{m}</option>
@@ -776,12 +787,12 @@ function IntegratedGroupPageContent() {
                   type='date'
                   value={newProblemDeadlineDate}
                   onChange={(e) => setNewProblemDeadlineDate(e.target.value)}
-                  className='flex-1 bg-background text-foreground border-input focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960] focus:outline-none rounded-xl h-11 px-3.5'
+                  className='flex-1 bg-background text-foreground border-input focus-visible:ring-1 focus-visible:ring-ring focus:outline-none rounded-xl h-11 px-3.5'
                 />
                 <select
                   value={newProblemDeadlineHour}
                   onChange={(e) => setNewProblemDeadlineHour(e.target.value)}
-                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-1 focus-visible:ring-ring'
                 >
                   {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map((h) => (
                     <option key={h} value={h}>{h}</option>
@@ -790,7 +801,7 @@ function IntegratedGroupPageContent() {
                 <select
                   value={newProblemDeadlineMinute}
                   onChange={(e) => setNewProblemDeadlineMinute(e.target.value)}
-                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
+                  className='border border-[#EBF1F4] rounded-xl px-2 text-sm h-11 bg-background focus:outline-none focus-visible:ring-1 focus-visible:ring-ring'
                 >
                   {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map((m) => (
                     <option key={m} value={m}>{m}</option>

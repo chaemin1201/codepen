@@ -99,18 +99,16 @@ function ColabCellsViewer({ cells }: { cells: ColabCell[] }) {
 }
 
 function IndividualSubmissionContent() {
-  const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()
 
-  const paramSubId = params.submissionId ? String(params.submissionId) : null
-  const querySubId = searchParams.get('submissionId')
+  // 🟢 [정리] 예전엔 /submission/{숫자ID} 형태(구 Submission 모델)로도 들어올 수 있다고
+  // 가정하고 폴백 코드를 잔뜩 짜놨는데, 실제로 이 화면에 들어오는 경로(제출 현황/채점
+  // 테이블의 클릭 핸들러)는 전부 questionId+userId만 넘기고 숫자 submissionId는 절대
+  // 안 넘겨요. 그래서 그 폴백은 실전에서 한 번도 안 타는 죽은 코드였습니다 - 제거하고
+  // questionId+userId 기준 하나로만 통일합니다.
   const questionIdParam = searchParams.get('questionId')
   const userIdParam = searchParams.get('userId')
-
-  const rawSubId = paramSubId && paramSubId !== 'detail' && paramSubId !== 'undefined'
-    ? paramSubId
-    : querySubId
 
   const { me } = useMe()
   const { group } = useGroup()
@@ -178,18 +176,13 @@ function IndividualSubmissionContent() {
       try {
         let subData: any = null
 
-        if (rawSubId && !isNaN(Number(rawSubId))) {
-          const res = await fetch(`/api/submission/${rawSubId}`)
-          if (res.ok) {
-            subData = await res.json()
-          }
-        }
-
-        if (!subData && questionIdParam && userIdParam) {
+        // 🟢 [정리] 예전 Submission 모델 기반 API(/api/submission/...)는 지금 실제
+        // 프론트 흐름에서는 절대 안 걸리는 죽은 코드라서 제거했습니다. question_id/user_id
+        // 기반의 새 시스템(QuestionAttempt)만 사용합니다.
+        if (questionIdParam && userIdParam) {
           const apiCandidates = [
             `/api/question/${questionIdParam}/attempt/${userIdParam}`,
             `/api/question/${questionIdParam}/attempts?userId=${userIdParam}`,
-            `/api/submission?questionId=${questionIdParam}&userId=${userIdParam}`
           ]
 
           for (const url of apiCandidates) {
@@ -307,18 +300,16 @@ function IndividualSubmissionContent() {
 
     fetchSubmissionDetails()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawSubId, questionIdParam, userIdParam, isColab])
+  }, [questionIdParam, userIdParam, isColab])
 
   const handleSaveScore = async () => {
     if (score === '') return toast.error('점수를 입력해주세요.')
     setIsSubmitting(true)
 
-    const targetSubId = submission?.submission_id || submission?.id || rawSubId
-
     try {
-      const endpoint = targetSubId && !isNaN(Number(targetSubId))
-        ? `/api/submission/${targetSubId}/score`
-        : `/api/question/${questionIdParam}/attempt/${userIdParam}/score`
+      // 🟢 [정리] 예전 /api/submission/{id}/score 분기는 실제로는 절대 안 걸리는
+      // 죽은 코드라 제거했습니다. QuestionAttempt 기반 점수 저장 API만 사용합니다.
+      const endpoint = `/api/question/${questionIdParam}/attempt/${userIdParam}/score`
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -444,7 +435,7 @@ function IndividualSubmissionContent() {
           </span>
           <span className="text-slate-300">|</span>
           <span className="text-slate-400 font-mono">
-            Submission ID: {submission?.submission_id || submission?.id || rawSubId || '-'}
+            Submission ID: {submission?.submission_id || submission?.id || searchParams.get('submissionId') || '-'}
           </span>
         </div>
       </header>

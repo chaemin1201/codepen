@@ -36,6 +36,10 @@ import { fetcher } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import CodeMirror from '@uiw/react-codemirror'
+import { html as htmlLang } from '@codemirror/lang-html'
+import { css as cssLang } from '@codemirror/lang-css'
+import { javascript as jsLang } from '@codemirror/lang-javascript'
 import { Label } from '@/components/ui/label'
 import {
   Dialog,
@@ -265,6 +269,12 @@ function QuestionDetailPageContent() {
   // 🟢 Colab 전용 - 제출할 Colab 노트북 링크
   const [userSubmitUrl, setUserSubmitUrl] = useState<string>('')
 
+  // 🟢 [신규 - 2단계] 자동 생성된 내 노트북 - 더 이상 학생이 직접 링크를 붙여넣지 않고,
+  // 교수 Drive 계정으로 자동 생성/공유된 노트북을 "가져오기 또는 없으면 만들기"로 받아옵니다.
+  const [myNotebookUrl, setMyNotebookUrl] = useState<string | null>(null)
+  const [isProvisioningNotebook, setIsProvisioningNotebook] = useState(false)
+  const [notebookError, setNotebookError] = useState<string | null>(null)
+
   // 🟢 자체 에디터 상태 - 학생이 이 페이지 안에서 바로 작성하는 코드
   const [editorHtml, setEditorHtml] = useState('')
   const [editorCss, setEditorCss] = useState('')
@@ -277,16 +287,37 @@ function QuestionDetailPageContent() {
   )
 
   useEffect(() => {
-    // 🟢 Colab 링크 임시저장/복원 (자체 에디터는 링크가 없으니 해당 없음)
-    if (questionId && isColab) {
-      const savedUrl = localStorage.getItem(`${platform}_url_q_${questionId}`)
-      if (savedUrl) {
-        setUserSubmitUrl(savedUrl)
-      } else if (question?.codepen_url) {
-        setUserSubmitUrl(question.codepen_url)
+    // 🟢 [수정 - 2단계] 예전엔 학생이 직접 붙여넣은 링크를 로컬에서 복원했는데, 이제는
+    // 서버가 "가져오기 또는 없으면 만들기"로 노트북을 자동 준비해줍니다. 실패하면(예:
+    // 교수가 아직 Drive를 연결 안 함) notebookError를 채워서 화면에서 안내하고,
+    // 그럴 때만 예전처럼 수동 링크 입력을 폴백으로 보여줍니다.
+    if (!questionId || !isColab) return
+
+    const provisionNotebook = async () => {
+      setIsProvisioningNotebook(true)
+      setNotebookError(null)
+      try {
+        const res = await fetch(`/api/question/${questionId}/colab-notebook`, { method: 'POST' })
+        const data = await res.json().catch(() => ({} as any))
+        if (!res.ok) {
+          setNotebookError(data.error || '노트북을 준비하지 못했습니다.')
+          // 폴백: 예전처럼 로컬에 저장된 수동 링크가 있으면 그거라도 씀
+          const savedUrl = localStorage.getItem(`${platform}_url_q_${questionId}`)
+          if (savedUrl) setUserSubmitUrl(savedUrl)
+          return
+        }
+        setMyNotebookUrl(data.colab_url)
+        setUserSubmitUrl(data.colab_url) // 기존 제출 로직(activeSubmitUrl 등)이 그대로 동작하도록
+      } catch (e) {
+        console.error('노트북 준비 실패:', e)
+        setNotebookError('노트북을 준비하는 중 오류가 발생했습니다.')
+      } finally {
+        setIsProvisioningNotebook(false)
       }
     }
-  }, [questionId, question, platform, isColab])
+
+    provisionNotebook()
+  }, [questionId, platform, isColab])
 
   // 🟢 [수정] 자체 에디터 코드 복원 - 우선순위 2단계
   //   1순위: 로컬 임시저장본 (작성하다가 중간에 나간 경우 - 새로고침해도 안 날아가게)
@@ -352,8 +383,10 @@ function QuestionDetailPageContent() {
 </body>
 </html>`
 
-  const handleHtmlEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab' && e.currentTarget.value.trim() === '!') {
+  // 🟢 [수정] CodeMirror로 바꾸면서 e.currentTarget.value(텍스트박스 전용) 대신
+  // React state(editorHtml)를 직접 확인하도록 변경 - 에디터 종류가 바뀌어도 안전합니다.
+  const handleHtmlEditorKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Tab' && editorHtml.trim() === '!') {
       e.preventDefault()
       handleEditorChange('html', HTML_BOILERPLATE)
     }
@@ -572,7 +605,7 @@ ${editorHtml}
             isColab ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
           }`}>
             {isColab ? <BookOpenIcon className="size-3.5" /> : <SquareCodeIcon className="size-3.5" />}
-            {isColab ? 'Colab' : 'codepen'}
+            {isColab ? 'Colab' : '자체 에디터'}
           </span>
           <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full shadow-2xs border border-indigo-100">
             배점: {question.score}점
@@ -729,30 +762,39 @@ ${editorHtml}
                         ))}
                       </div>
 
-                      <div className="flex-1 min-h-0">
+                      <div className="flex-1 min-h-0 rounded-md border border-slate-200 overflow-hidden">
                         {activeEditorTab === 'html' && (
-                          <Textarea
+                          <CodeMirror
                             value={editorHtml}
-                            onChange={(e) => handleEditorChange('html', e.target.value)}
+                            height="100%"
+                            extensions={[htmlLang()]}
+                            onChange={(value) => handleEditorChange('html', value)}
                             onKeyDown={handleHtmlEditorKeyDown}
                             placeholder="! 입력 후 Tab을 누르면 기본 HTML 틀이 채워져요"
-                            className="font-mono text-xs bg-white resize-none h-full w-full overflow-y-auto"
+                            className="h-full text-xs"
+                            basicSetup={{ lineNumbers: true, foldGutter: true, autocompletion: true, bracketMatching: true, closeBrackets: true }}
                           />
                         )}
                         {activeEditorTab === 'css' && (
-                          <Textarea
+                          <CodeMirror
                             value={editorCss}
-                            onChange={(e) => handleEditorChange('css', e.target.value)}
+                            height="100%"
+                            extensions={[cssLang()]}
+                            onChange={(value) => handleEditorChange('css', value)}
                             placeholder="div { color: red; }"
-                            className="font-mono text-xs bg-white resize-none h-full w-full overflow-y-auto"
+                            className="h-full text-xs"
+                            basicSetup={{ lineNumbers: true, foldGutter: true, autocompletion: true, bracketMatching: true, closeBrackets: true }}
                           />
                         )}
                         {activeEditorTab === 'js' && (
-                          <Textarea
+                          <CodeMirror
                             value={editorJs}
-                            onChange={(e) => handleEditorChange('js', e.target.value)}
+                            height="100%"
+                            extensions={[jsLang()]}
+                            onChange={(value) => handleEditorChange('js', value)}
                             placeholder="console.log('hi')"
-                            className="font-mono text-xs bg-white resize-none h-full w-full overflow-y-auto"
+                            className="h-full text-xs"
+                            basicSetup={{ lineNumbers: true, foldGutter: true, autocompletion: true, bracketMatching: true, closeBrackets: true }}
                           />
                         )}
                       </div>
@@ -782,18 +824,55 @@ ${editorHtml}
                 <div className="p-4 rounded-xl space-y-2 border bg-amber-50/50 border-amber-100">
                   <Label className="text-xs font-bold flex items-center gap-1.5 text-amber-900">
                     <BookOpenIcon className="size-4 text-amber-600" />
-                    제출할 Colab URL 입력
+                    내 Colab 노트북
                   </Label>
-                  <Input
-                    type="url"
-                    placeholder="예: https://colab.research.google.com/drive/xxxxxxxxxxxx"
-                    value={userSubmitUrl}
-                    onChange={(e) => handleSubmitUrlChange(e.target.value)}
-                    className="bg-white text-xs font-mono"
-                  />
-                  <p className="text-[11px] text-slate-500">
-                    Colab에서 파일 → 공유 → <b>"링크가 있는 모든 사용자"</b>로 공유 설정 후, 주소창의 URL을 복사해서 붙여넣어 주세요. (입력 시 자동 임시 저장됩니다)
-                  </p>
+
+                  {isProvisioningNotebook ? (
+                    <div className="flex items-center gap-2 text-xs text-amber-700 py-2">
+                      <LoaderCircleIcon className="size-4 animate-spin" />
+                      노트북을 준비하는 중입니다...
+                    </div>
+                  ) : myNotebookUrl ? (
+                    <>
+                      <a href={myNotebookUrl} target="_blank" rel="noopener noreferrer">
+                        <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white gap-2 text-xs font-semibold">
+                          <BookOpenIcon className="size-4" />
+                          내 노트북 열어서 작성하기
+                          <ExternalLinkIcon className="size-3 opacity-70" />
+                        </Button>
+                      </a>
+                      <p className="text-[11px] text-slate-500">
+                        교수님 계정으로 자동 생성되어 본인 이메일로 공유된 노트북이에요. 여기서 작성하고 저장한 뒤, 아래 "과제 제출하기"를 눌러주세요.
+                      </p>
+                      <p className="text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded-lg p-2 flex items-start gap-1.5">
+                        <span>⚠️</span>
+                        <span>
+                          <b>반드시 셀을 전부 실행(런타임 → 모두 실행, 또는 Ctrl/Cmd+F9)한 뒤 저장</b>해주세요.
+                          실행하지 않고 코드만 작성한 채로 제출하면, 채점 화면에 <b>실행 결과(출력)가 보이지 않아요</b>.
+                          코드만 저장돼요.
+                        </span>
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[11px] text-rose-600 font-medium bg-rose-50 border border-rose-100 rounded-lg p-2">
+                        ⚠️ {notebookError || '노트북을 준비하지 못했습니다.'}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        자동 준비가 안 되면, 직접 만든 Colab 링크를 아래에 붙여넣어도 제출할 수 있어요 (링크가 있는 모든 사용자로 공유 필요).
+                      </p>
+                      <p className="text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded-lg p-2">
+                        ⚠️ 이 경우에도 <b>셀을 전부 실행한 뒤 저장</b>해야 결과(출력)가 채점 화면에 보여요.
+                      </p>
+                      <Input
+                        type="url"
+                        placeholder="예: https://colab.research.google.com/drive/xxxxxxxxxxxx"
+                        value={userSubmitUrl}
+                        onChange={(e) => handleSubmitUrlChange(e.target.value)}
+                        className="bg-white text-xs font-mono"
+                      />
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -816,8 +895,9 @@ ${editorHtml}
               </div>
 
               <div className="flex items-center gap-3">
-                {/* 🟢 [수정] 자체 에디터는 외부 사이트로 나갈 필요가 없어서 버튼 자체를 숨김. Colab만 남음 */}
-                {isColab && (
+                {/* 🟢 [수정] myNotebookUrl이 있으면 위쪽에 이미 "내 노트북 열기" 버튼이 있어서
+                    중복이라 숨기고, 자동 준비가 실패해 수동 링크 입력으로 폴백된 경우에만 보여줌 */}
+                {isColab && !myNotebookUrl && (
                   <a href={baseSubmitUrl} target="_blank" rel="noopener noreferrer">
                     <Button variant="outline" className="text-xs font-semibold gap-2 shadow-2xs">
                       <BookOpenIcon className="size-4" />
@@ -895,6 +975,10 @@ ${editorHtml}
                   )}
                 </div>
 
+                <p className="text-xs text-center font-semibold bg-amber-50 text-amber-700 py-2 rounded-lg border border-amber-100">
+                  ⚠️ Colab에서 <b>런타임 → 모두 실행</b>(또는 Ctrl/Cmd+F9)으로 셀을 전부 실행하고 저장했는지 꼭 확인해주세요.
+                  실행하지 않으면 채점 화면에 결과(출력)가 안 보이고 코드만 보여요.
+                </p>
                 <p className="text-xs text-center font-medium bg-rose-50 text-rose-600 py-2 rounded-lg">
                   최종 제출 후에는 코드를 수정할 수 없습니다. 결과가 올바른지 확인해주세요.
                 </p>

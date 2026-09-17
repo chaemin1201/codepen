@@ -21,5 +21,7 @@ export async function middleware (request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/groups/:path*', '/problem/:path*', '/submission/:path*'],
+  // 🟢 [수정] '/grades'가 빠져 있어서 로그인 없이도 성적 조회 페이지에 직접
+  // 접근할 수 있었습니다. 추가했습니다.
+  matcher: ['/groups/:path*', '/problem/:path*', '/submission/:path*', '/grades/:path*'],
 }

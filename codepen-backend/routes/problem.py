@@ -1,32 +1,26 @@
+import csv
 from datetime import datetime, timezone
-import os
-import shutil
-import glob
-from fastapi import APIRouter, Response, Depends
-from sqlmodel import Session, select, and_, or_
+from io import BytesIO, StringIO
+from zipfile import ZipFile
+
+from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel
+from sqlmodel import Session, and_, delete, or_, select
+
 from db import engine
-from models.user import User
+from models.category import Category
 from models.group import Group
 from models.problem import Problem, create_problem_response
-from models.category import Category
-from models.submission import Submission
-from utils.codepen import close_codepen_pen, open_codepen_pen
-from utils.user import login_required
+from models.question import Question
+from models.question_attempt import QuestionAttempt
+from models.user import User
 from utils.scheduler import (
     reschedule_problem_deadline,
     schedule_problem_deadline,
 )
-from pydantic import BaseModel
-from zipfile import ZipFile
-from io import BytesIO
-import csv 
-from pathlib import Path
+from utils.user import login_required
 
 
-# [버그 수정] fromisoformat만 쓰면 클라이언트가 타임존 없는 문자열을 보냈을 때
-# naive datetime이 그대로 저장돼서, 나중에 aware datetime과 비교하다 500이
-# 나는 경우가 있었습니다(카테고리 쪽에서 실제로 재현됨). 문제 생성/수정도
-# 같은 위험이 있어서 항상 UTC aware로 정규화하는 헬퍼를 씁니다.
 def _parse_dt_aware(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
@@ -39,15 +33,10 @@ class PartialProblem(BaseModel):
     category_id: int | None = None
     question_count: int = 1
     title: str | None = None
-    description: str | None = ""  # 🟢 입력하지 않아도 422 에러 없이 통과
+    description: str | None = ""
     difficulty: str | None = "easy"
     starts_at: str | None = None
     deadline: str | None = None
-    # 🟢 [수정] bool = False 였던 걸 bool | None = None 으로 변경.
-    # 예전 타입(bool)은 값을 안 보내도 Pydantic이 항상 False로 채워버려서,
-    # update_problem의 "if problem.hide_before_start is not None:" 체크가
-    # 항상 참이 되어 매번 무조건 False로 덮어써지는 버그가 있었습니다.
-    # (제목/설명만 수정하려고 이 필드를 안 보내도 "시작 전 숨김"이 꺼져버림)
     hide_before_start: bool | None = None
 
 
@@ -61,27 +50,28 @@ async def create_problem(
     current_user: User = Depends(login_required),
 ):
     with Session(engine) as session:
-        # check if the group exists
         group = session.get(Group, problem.group_id)
         if not group:
             response.status_code = 404
             return {"error": "Group not found"}
-        # check if the current user is an owner of the group
+
         if group.owner_id != current_user.user_id:
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
-        # [신규] category_id를 지정했다면 같은 그룹 소속 카테고리인지 확인
+
         if problem.category_id is not None:
             category = session.get(Category, problem.category_id)
             if not category or category.group_id != problem.group_id:
                 response.status_code = 400
                 return {"error": "Invalid category for this group"}
+
         try:
             parsed_starts_at = _parse_dt_aware(problem.starts_at)
             parsed_deadline = _parse_dt_aware(problem.deadline)
         except ValueError:
             response.status_code = 400
             return {"error": "Invalid datetime format. Use ISO 8601 format."}
+
         new_problem = Problem(
             group_id=problem.group_id,
             category_id=problem.category_id,
@@ -91,7 +81,6 @@ async def create_problem(
             difficulty=problem.difficulty,
             starts_at=parsed_starts_at,
             deadline=parsed_deadline,
-            # 🟢 [수정] 이제 None이 올 수 있으니, 생성 시에는 None이면 False로 처리
             hide_before_start=bool(problem.hide_before_start),
         )
         session.add(new_problem)
@@ -130,7 +119,6 @@ async def update_problem(
                 response.status_code = 400
                 return {"error": "Invalid category for this group"}
 
-        # 🟢 전달받은 날짜가 있을 때만 파싱 및 적용
         if problem.starts_at:
             try:
                 existing_problem.starts_at = _parse_dt_aware(problem.starts_at)
@@ -141,15 +129,11 @@ async def update_problem(
         if problem.deadline:
             try:
                 new_deadline = _parse_dt_aware(problem.deadline)
-                if existing_problem.deadline and new_deadline > existing_problem.deadline.replace(tzinfo=timezone.utc):
-                    for submission in existing_problem.submissions:
-                        await open_codepen_pen(submission.codepen_url)
                 existing_problem.deadline = new_deadline
             except ValueError:
                 response.status_code = 400
                 return {"error": "Invalid deadline datetime format."}
 
-        # 🟢 전달된 값이 있을 경우에만 필드 업데이트
         if problem.title is not None:
             existing_problem.title = problem.title
         if problem.description is not None:
@@ -175,6 +159,7 @@ async def update_problem(
         return create_problem_response(
             existing_problem, group.owner_id == current_user.user_id
         )
+
 
 @router.get("/{problem_id}")
 async def get_problem(
@@ -246,82 +231,30 @@ async def delete_problem(
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
 
-        for submission in problem.submissions:
-            await close_codepen_pen(submission.codepen_url)
-            # 하위 파일명만 존재하여 경로 탐색 공격 방어
-            safe_filename = os.path.basename(submission.filename)
-            submission_path = Path("submissions") / safe_filename
-            
-            if submission_path.exists() and safe_filename:
-                shutil.rmtree(submission_path)
-            session.delete(submission)
+        # 문제지 하위 소문제 및 시도(QuestionAttempt) 기록 깔끔히 삭제
+        questions = session.exec(
+            select(Question).where(Question.problem_id == problem_id)
+        ).all()
+        question_ids = [q.question_id for q in questions]
+
+        if question_ids:
+            session.exec(
+                delete(QuestionAttempt).where(QuestionAttempt.question_id.in_(question_ids))
+            )
+            session.exec(
+                delete(Question).where(Question.question_id.in_(question_ids))
+            )
 
         session.delete(problem)
         session.commit()
         return {"message": "Problem deleted successfully"}
 
 
-@router.get("/{problem_id}/download_all")
-async def download_all_submissions(
-    problem_id: int,
-    response: Response,
-    current_user: User = Depends(login_required),
-):
-    with Session(engine) as session:
-        problem = session.get(Problem, problem_id)
-        if not problem:
-            response.status_code = 404
-            return {"error": "Problem not found"}
-
-        group = session.get(Group, problem.group_id)
-        if not group:
-            response.status_code = 404
-            return {"error": "Group not found"}
-        if group.owner_id != current_user.user_id:
-            response.status_code = 403
-            return {"error": "Forbidden: You are not the owner of this group"}
-
-        submissions = session.exec(
-            select(Submission).where(Submission.problem_id == problem_id)
-        ).all()
-
-        zip_filename = f"{group.group_name.replace(' ', '_')}_{problem.title.replace(' ', '_')}_submissions.zip"
-        zip_buffer = BytesIO()
-        with ZipFile(zip_buffer, "w") as zip_file:
-            for submission in submissions:
-                # 기준 디렉토리를 다룰 때 상위 경로 탈출 차단
-                safe_sub_dir = os.path.basename(submission.filename)
-                base_dir = Path("submissions") / safe_sub_dir
-                
-                if not base_dir.exists():
-                    continue
-
-                for file in glob.glob(f"submissions/{safe_sub_dir}/**/*", recursive=True):
-                    if os.path.isfile(file):
-                        # 오직 내부 상대 경로만 순수하게 계산되도록 처리
-                        rel_path = os.path.relpath(file, start=str(base_dir))
-                        
-                        # 만약 상대 경로에 ../ 가 들어있다면 강제로 제거해서 Zip Slip 방어
-                        if ".." in rel_path:
-                            continue
-                            
-                        # 안전한 폴더명 규격화
-                        safe_user_folder = f"{problem.group.group_name}_{problem.title}_{submission.user.username}_{submission.user.student_no}".replace(" ", "_")
-                        arc_name = f"{safe_user_folder}/{rel_path}"
-                        
-                        zip_file.write(file, arcname=arc_name)
-
-        zip_buffer.seek(0)
-        return Response(
-            content=zip_buffer.read(), 
-            headers={"Content-Disposition": f"attachment; filename={zip_filename}"}, 
-            media_type="application/zip"
-        )
-
 @router.get("/{problem_id}/scores")
 async def get_problem_scores_in_csv(
     problem_id: int, response: Response, current_user: User = Depends(login_required)
 ):
+    """소문제 제출 점수를 집계하여 CSV 파일로 다운로드합니다."""
     with Session(engine) as session:
         problem = session.get(Problem, problem_id)
         if not problem:
@@ -336,24 +269,37 @@ async def get_problem_scores_in_csv(
             response.status_code = 403
             return {"error": "Forbidden: You are not the owner of this group"}
 
-        submissions = problem.submissions
-        # 텍스트 수동 결합 대신 csv.writer 사용
-        from io import StringIO
+        questions = session.exec(
+            select(Question).where(Question.problem_id == problem_id)
+        ).all()
+        question_ids = [q.question_id for q in questions]
+
+        attempts = session.exec(
+            select(QuestionAttempt).where(QuestionAttempt.question_id.in_(question_ids))
+        ).all() if question_ids else []
+
+        # 학생별 점수 합산
+        user_scores: dict[str, float] = {}
+        for a in attempts:
+            if a.professor_score is not None:
+                user_scores[a.user_id] = user_scores.get(a.user_id, 0) + a.professor_score
+
         csv_buffer = StringIO()
         writer = csv.writer(csv_buffer, quoting=csv.QUOTE_MINIMAL)
-        
-        # 헤더 작성
         writer.writerow(["Student No", "Username", "Score"])
-        
-        for submission in submissions:
-            student_no = submission.user.student_no if submission.user.student_no is not None else ""
-            username = submission.user.username
-            
-            # 💡 엑셀 매크로 주입(CSV Injection) 방어 방벽
-            if username and username[0] in ['=', '+', '-', '@']:
+
+        for member in group.members:
+            if member.user_id == group.owner_id:
+                continue
+
+            student_no = member.student_no if member.student_no is not None else ""
+            username = member.username or ""
+
+            # 엑셀 매크로 주입 방어
+            if username and username[0] in ["=", "+", "-", "@"]:
                 username = f"'{username}"
-                
-            score = submission.score if submission.score is not None else ""
+
+            score = user_scores.get(member.user_id, "")
             writer.writerow([student_no, username, score])
 
         csv_content = csv_buffer.getvalue()
@@ -361,7 +307,7 @@ async def get_problem_scores_in_csv(
 
         filename = f"{problem.group.group_name}_{problem.title}_scores.csv".replace(" ", "_")
         return Response(
-            content=csv_content, 
-            headers={"Content-Disposition": f"attachment; filename={filename}"}, 
-            media_type="text/csv"
+            content=csv_content,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            media_type="text/csv",
         )

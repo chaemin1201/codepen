@@ -61,7 +61,7 @@ const fieldTextareaClass =
   'w-full bg-background text-foreground border-input rounded-xl resize-none p-3 text-xs ' +
   'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8D5B0] focus-visible:border-[#589960]'
 
-// --- 제출 여부(횟수) 배지 ---
+// --- 제출 여부(횟수) 배지 (학생 본인 화면용 - 본인이 몇 번 제출했는지) ---
 const SubmissionBadge = ({ attemptsCount }: { attemptsCount: number }) => {
   const isSubmitted = attemptsCount > 0
 
@@ -87,17 +87,57 @@ const SubmissionBadge = ({ attemptsCount }: { attemptsCount: number }) => {
   )
 }
 
+// 🟢 [수정] 교수(owner) 화면용 - "내(교수) 제출 여부"가 아니라 "학생 몇 명이 제출했는지" 집계.
+// 예전엔 owner가 봐도 my_attempt(=교수 본인의 제출 기록, 항상 0)를 기준으로 배지를 그려서
+// 학생들이 다 제출해도 이 화면에선 항상 "미제출"로만 보였습니다. stats.submitted_students
+// (서로 다른 학생 수)를 group.members(오너 제외) 전체 학생 수와 비교해서 보여줍니다.
+const OwnerSubmissionBadge = ({
+  submittedStudents,
+  totalStudents,
+}: {
+  submittedStudents: number
+  totalStudents: number
+}) => {
+  const allSubmitted = totalStudents > 0 && submittedStudents >= totalStudents
+
+  return (
+    <div
+      className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs border min-w-[95px] ${
+        allSubmitted
+          ? 'bg-emerald-50/70 text-emerald-700 border-emerald-200/80'
+          : submittedStudents > 0
+            ? 'bg-amber-50/70 text-amber-700 border-amber-200/80'
+            : 'bg-rose-50/70 text-rose-700 border-rose-200/80'
+      }`}
+      title="이 소문제를 제출한 학생 수 / 전체 학생 수"
+    >
+      <span
+        className={`h-4 min-w-[16px] px-1.5 rounded-full flex items-center justify-center text-[10px] text-white font-bold ${
+          allSubmitted ? 'bg-emerald-500' : submittedStudents > 0 ? 'bg-amber-500' : 'bg-rose-500'
+        }`}
+      >
+        {submittedStudents}
+      </span>
+      <span className="text-[11px] font-bold whitespace-nowrap">
+        / {totalStudents}명 제출
+      </span>
+    </div>
+  )
+}
+
 // --- 소문제 목록 컴포넌트 ---
 function QuestionList({
   problemId,
   groupId,
   isOwner,
   searchTerm,
+  totalStudents,
 }: {
   problemId: number
   groupId: number
   isOwner: boolean
   searchTerm: string
+  totalStudents: number
 }) {
   const router = useRouter()
   const { questions, isLoading, mutate } = useQuestions(problemId)
@@ -495,7 +535,14 @@ function QuestionList({
                       {q.title}
                     </td>
                     <td>
-                      <SubmissionBadge attemptsCount={q.my_attempt?.attempts_count ?? 0} />
+                      {isOwner ? (
+                        <OwnerSubmissionBadge
+                          submittedStudents={(q as any).stats?.submitted_students ?? 0}
+                          totalStudents={totalStudents}
+                        />
+                      ) : (
+                        <SubmissionBadge attemptsCount={q.my_attempt?.attempts_count ?? 0} />
+                      )}
                     </td>
 
                     {/* 시도한 횟수 td 삭제됨 */}
@@ -660,6 +707,11 @@ function ProblemPageContent() {
     (c) => c.category_id === problem.category_id
   )
 
+  // 🟢 [수정] 오너용 배지에 쓸 "전체 학생 수" (그룹 오너 본인 제외)
+  const totalStudents = (group?.members ?? []).filter(
+    (m: any) => m.user_id !== group?.owner?.user_id
+  ).length
+
   return (
     <div className="min-h-screen bg-[#fafafa]">
       <Header user={me} />
@@ -790,6 +842,7 @@ function ProblemPageContent() {
             groupId={group.group_id}
             isOwner={isOwner}
             searchTerm={searchTerm}
+            totalStudents={totalStudents}
           />
         )}
       </div>

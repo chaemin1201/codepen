@@ -1,7 +1,6 @@
 from .group_member import GroupMember
 from .group import Group
 from .problem import Problem
-from .submission import Submission
 from .user import User
 from .invite_queue import InviteQueue
 from .category import Category

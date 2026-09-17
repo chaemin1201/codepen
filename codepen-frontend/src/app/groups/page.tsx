@@ -1,8 +1,8 @@
 'use client'
 
-import React, { Suspense, useState } from 'react'
+import React, { Suspense, useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { 
   SearchIcon, 
@@ -15,6 +15,8 @@ import {
   XIcon,
   BookOpenIcon,
   SquareCodeIcon,
+  HardDriveIcon,
+  AlertTriangleIcon,
 } from 'lucide-react'
 
 import { Header } from '@/components/header'
@@ -59,8 +61,161 @@ function PlatformBadge({ platform }: { platform?: 'codepen' | 'colab' }) {
       }`}
     >
       {isColab ? <BookOpenIcon className="w-3 h-3" /> : <SquareCodeIcon className="w-3 h-3" />}
-      {isColab ? 'Colab' : 'codepen'}
+      {isColab ? 'Colab' : '자체 에디터'}
     </span>
+  )
+}
+
+// 🟢 [신규] 학생용 - 마감 임박 + 미제출 알림 배너. 24시간 이내 마감이면서
+// 아직 다 제출 안 한 문제지가 있으면 여기에 떠요.
+interface UpcomingDeadline {
+  group_id: number
+  group_name: string
+  problem_id: number
+  problem_title: string
+  deadline: string
+  minutes_left: number
+  submitted_count: number
+  total_count: number
+}
+
+function formatMinutesLeft(minutes: number) {
+  if (minutes < 60) return `${minutes}분`
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+  return mins > 0 ? `${hours}시간 ${mins}분` : `${hours}시간`
+}
+
+function UpcomingDeadlinesBanner() {
+  const router = useRouter()
+  const [deadlines, setDeadlines] = useState<UpcomingDeadline[]>([])
+  const [dismissed, setDismissed] = useState(false)
+
+  useEffect(() => {
+    const fetchDeadlines = async () => {
+      try {
+        const res = await fetch('/api/user/me/upcoming-deadlines', { credentials: 'include' })
+        if (res.ok) {
+          const data = await res.json()
+          setDeadlines(Array.isArray(data) ? data : [])
+        }
+      } catch {
+        // 조용히 무시 - 알림 배너는 "있으면 좋은" 기능이라 실패해도 나머지 화면엔 영향 없음
+      }
+    }
+    fetchDeadlines()
+  }, [])
+
+  if (dismissed || deadlines.length === 0) return null
+
+  return (
+    <div className='rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 text-sm space-y-2'>
+      <div className='flex items-center justify-between'>
+        <div className='flex items-center gap-2 text-rose-800 font-bold'>
+          <AlertTriangleIcon className='w-4 h-4' />
+          마감 임박 · 미제출 과제 {deadlines.length}개
+        </div>
+        <button
+          onClick={() => setDismissed(true)}
+          className='text-rose-400 hover:text-rose-600 text-xs'
+        >
+          닫기
+        </button>
+      </div>
+      <div className='space-y-1.5'>
+        {deadlines.map((d) => (
+          <button
+            key={`${d.problem_id}`}
+            onClick={() => router.push(`/problem/${d.problem_id}?groupId=${d.group_id}`)}
+            className='w-full flex items-center justify-between gap-2 rounded-lg bg-white border border-rose-100 px-3 py-2 text-left hover:border-rose-300 transition-colors'
+          >
+            <span className='text-slate-700 font-medium truncate'>
+              📚 {d.group_name} · {d.problem_title}
+              <span className='text-slate-400 font-normal ml-1.5'>
+                ({d.submitted_count}/{d.total_count} 제출)
+              </span>
+            </span>
+            <span className='shrink-0 text-rose-600 font-bold text-xs'>
+              {formatMinutesLeft(d.minutes_left)} 남음
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// 🟢 [신규] 교수용 - Google Drive 연결 상태 배너. Colab 그룹에서 학생별 노트북을
+// 자동으로 만들어주려면 교수 본인 구글 계정에 Drive 쓰기 권한을 연결해야 합니다.
+function GoogleDriveConnectBanner() {
+  const [connected, setConnected] = useState<boolean | null>(null)
+  const [isDisconnecting, setIsDisconnecting] = useState(false)
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch('/api/google-drive/status', { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setConnected(!!data.connected)
+      }
+    } catch {
+      // 상태 조회 실패는 조용히 무시 (배너는 "연결 안 됨"으로 기본 표시)
+      setConnected(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchStatus()
+  }, [])
+
+  const handleDisconnect = async () => {
+    if (!confirm('Google Drive 연결을 해제하시겠습니까? Colab 학생별 노트북 자동 생성 기능을 쓸 수 없게 됩니다.')) return
+    setIsDisconnecting(true)
+    try {
+      await fetch('/api/google-drive/disconnect', { method: 'DELETE', credentials: 'include' })
+      toast.success('Google Drive 연결이 해제되었습니다.')
+      setConnected(false)
+    } catch {
+      toast.error('연결 해제에 실패했습니다.')
+    } finally {
+      setIsDisconnecting(false)
+    }
+  }
+
+  if (connected === null) return null // 상태 확인 전에는 깜빡임 방지를 위해 아무것도 안 보여줌
+
+  if (connected) {
+    return (
+      <div className='flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-sm'>
+        <div className='flex items-center gap-2 text-emerald-800 font-semibold'>
+          <HardDriveIcon className='w-4 h-4' />
+          Google Drive 연결됨 - Colab 학생별 노트북 자동 생성을 쓸 수 있어요
+        </div>
+        <Button
+          size='sm'
+          variant='outline'
+          onClick={handleDisconnect}
+          disabled={isDisconnecting}
+          className='shrink-0 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-100 bg-white'
+        >
+          연결 해제
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className='flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm flex-wrap'>
+      <div className='flex items-center gap-2 text-amber-800 font-semibold'>
+        <HardDriveIcon className='w-4 h-4' />
+        Google Drive가 연결되지 않았어요 - Colab 그룹을 쓰신다면 연결을 추천해요
+      </div>
+      <a href='/api/google-drive/connect'>
+        <Button size='sm' className='shrink-0 text-xs bg-[#589960] hover:bg-[#173A23] text-white'>
+          Google Drive 연결하기
+        </Button>
+      </a>
+    </div>
   )
 }
 
@@ -160,7 +315,7 @@ function CreateGroupDialog ({ onCreated }: { onCreated: () => void }) {
                 }`}
               >
                 <SquareCodeIcon className='w-5 h-5' />
-                <span className='text-xs font-bold'>codepen</span>
+                <span className='text-xs font-bold'>자체 에디터</span>
                 <span className='text-[10px] text-[#868C88]'>웹 프론트엔드 실습</span>
               </button>
               <button
@@ -206,11 +361,23 @@ function GroupsContent() {
   const { me } = useMe()
   const { groups: Groups, isLoading: isGroupsLoading, mutate: refreshGroups } = useGroups()
   const { invites: pendingInvites, mutate: refreshInvites } = usePendingInvites()
+  const searchParams = useSearchParams()
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [cancelingCode, setCancelingCode] = useState<string | null>(null)
   const [joinCodeInput, setJoinCodeInput] = useState('')
   const [isJoining, setIsJoining] = useState(false)
+
+  // 🟢 [신규] /google-drive/callback이 여기로 ?drive_connect=success|failed를 붙여서 돌아옵니다.
+  useEffect(() => {
+    const driveConnect = searchParams.get('drive_connect')
+    if (driveConnect === 'success') {
+      toast.success('Google Drive가 성공적으로 연결되었습니다.')
+    } else if (driveConnect === 'failed') {
+      toast.error('Google Drive 연결에 실패했습니다. 다시 시도해주세요.')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const safeGroups = Groups || []
   
@@ -266,6 +433,11 @@ function GroupsContent() {
       <Header user={me} />
 
       <main className='max-w-7xl mx-auto space-y-6 p-4 md:p-6'>
+        {/* 🟢 [신규] 교수한테만 노출 - Colab 학생별 노트북 자동 생성을 위한 Drive 연결 배너 */}
+        {/* 🟢 [신규] 마감 임박 + 미제출 알림 (역할 상관없이 - 백엔드가 GroupMember 기준으로 알아서 비워줌) */}
+        <UpcomingDeadlinesBanner />
+        {me?.role === 'professor' && <GoogleDriveConnectBanner />}
+
         <div className={hasPendingInvites ? 'flex flex-col lg:flex-row gap-6 items-start' : ''}>
           <div className={hasPendingInvites ? 'flex-1 min-w-0 space-y-6' : 'space-y-6'}>
             <div className='flex flex-col sm:flex-row items-center justify-between gap-3'>

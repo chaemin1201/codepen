@@ -1,31 +1,38 @@
-import os
-import uuid
 import io
-import zipfile
-import re
 import json
-from utils.colab import download_colab_snapshot, get_colab_file_id
+import os
+import re
+import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Response, Depends, UploadFile, File
-from sqlmodel import Session, select
+from fastapi import APIRouter, Depends, File, Response, UploadFile
 from pydantic import BaseModel
-from supabase import create_client, Client
+from sqlmodel import Session, select
+from supabase import Client, create_client
 
 from db import engine
-from models.user import User
+from models.category import CategoryType
+from models.colab import ColabNotebook
 from models.group import Group
 from models.problem import Problem
 from models.question import Question
 from models.question_attempt import QuestionAttempt
-from models.submission import Submission
-from models.category import CategoryType
+from models.user import User
+from routes.colab import get_valid_drive_token
+from utils.colab import (
+    create_notebook_for_student,
+    download_colab_snapshot,
+    download_notebook_with_oauth,
+    get_colab_file_id,
+    share_file_with_email,
+)
 from utils.user import login_required
 
 router = APIRouter(prefix="/question")
 
-# 🟢 Supabase 클라이언트 초기화 (.env 설정 참조)
+# Supabase 클라이언트 초기화 (.env 설정 참조)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
@@ -49,9 +56,6 @@ class AttemptStats(BaseModel):
     total_graded: int
     total_correct: int
     accuracy: float | None = None
-    # 🟢 [신규] 이 소문제를 실제로 "제출한 서로 다른 학생 수" (재제출 중복 제거).
-    # total_attempts는 재제출 포함 총 시도 횟수 합계라서 교수 화면에 "학생 몇 명 제출"을
-    # 보여주는 용도로는 안 맞았습니다.
     submitted_students: int = 0
 
 
@@ -61,8 +65,6 @@ class MyAttempt(BaseModel):
     last_submitted_at: datetime | None = None
 
 
-# 🟢 [신규] 마감(deadline) 대비 제출 시각을 비교해 지각 여부/지각 시간(분)을 계산.
-# 프론트엔드가 브라우저 로컬 시계로만 판단하지 않도록 서버가 기준값을 내려줍니다.
 def _compute_late_info(deadline: datetime | None, submitted_at: datetime | None):
     if not deadline or not submitted_at:
         return False, None
@@ -78,12 +80,6 @@ def _compute_late_info(deadline: datetime | None, submitted_at: datetime | None)
 
     late_minutes = int((submitted_at - deadline).total_seconds() // 60)
     return True, late_minutes
-
-
-# 🟢 [수정] CodePen 연동을 완전히 제거하면서 여기 있던 _fetch_codepen_source() /
-# _CODEPEN_URL_RE (CORS 우회를 위해 서버가 CodePen을 대신 긁어오던 헬퍼)도 함께
-# 삭제했습니다. 이제 "자체 에디터" 플랫폼은 프론트가 보낸 html/css/js를 그대로 쓰므로
-# 외부 사이트에서 코드를 가져오는 과정 자체가 필요 없습니다.
 
 
 class QuestionResponse(BaseModel):
@@ -109,10 +105,7 @@ class GradeAttempt(BaseModel):
     is_correct: bool | None
 
 
-# 🟢 [수정] 프론트엔드에서 HTML, CSS, JS 코드를 직접 받을 수 있도록 필드 추가
 class SubmitQuestionBody(BaseModel):
-    # 🟢 [수정] CodePen이 제거되어 "자체 에디터" 플랫폼에선 아예 안 쓰입니다. Colab일 때만
-    # 노트북 공유 링크로 사용됩니다.
     codepen_url: str | None = None
     html: str | None = ""
     css: str | None = ""
@@ -131,22 +124,10 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
     graded = [a for a in attempts if a.is_correct is not None]
     correct = [a for a in graded if a.is_correct]
     accuracy = (len(correct) / len(graded) * 100) if graded else None
-    # 🟢 [신규] 재제출 중복 없이, 실제로 제출한(attempts_count > 0) 서로 다른 학생 수
     submitted_students = len({a.user_id for a in attempts if a.attempts_count > 0})
 
     mine = next((a for a in attempts if a.user_id == current_user_id), None)
     last_submitted_at = getattr(mine, "updated_at", None) if mine else None
-
-    if not last_submitted_at:
-        with Session(engine) as session:
-            sub = session.exec(
-                select(Submission).where(
-                    Submission.problem_id == question.problem_id,
-                    Submission.user_id == current_user_id,
-                )
-            ).first()
-            if sub and sub.submitted_at:
-                last_submitted_at = sub.submitted_at
 
     cond_val = getattr(question, "condition", getattr(question, "conditions", None))
     img_url_val = getattr(question, "example_image_url", None)
@@ -172,7 +153,7 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
             submitted_students=submitted_students,
         ),
         my_attempt=MyAttempt(
-            attempts_count=mine.attempts_count if mine else (1 if last_submitted_at else 0),
+            attempts_count=mine.attempts_count if mine else 0,
             is_correct=mine.is_correct if mine else None,
             last_submitted_at=last_submitted_at,
         ),
@@ -180,19 +161,13 @@ def _build_response(question: Question, current_user_id: str) -> QuestionRespons
     )
 
 
-# 🟢 [신규] Jupyter 에러 트레이스백에 섞여 있는 터미널 색상 코드(ANSI escape)를 제거하기 위한 정규식
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def make_safe_filename(filename: str) -> str:
-    """Storage 키로 안전하게 쓸 수 있도록 파일명을 정제한다.
-    한글, 공백, 특수문자를 제거하고 확장자는 보존한다."""
     name = os.path.basename(filename or "file")
-    # 확장자 분리
     stem, ext = os.path.splitext(name)
-    # 영문/숫자/-/_ 만 남기고 나머지는 언더스코어로 치환
     stem = re.sub(r"[^a-zA-Z0-9\-_]", "_", stem)
-    # 연속된 언더스코어 정리 + 앞뒤 언더스코어 제거
     stem = re.sub(r"_+", "_", stem).strip("_")
     if not stem:
         stem = uuid.uuid4().hex[:8]
@@ -240,6 +215,90 @@ async def get_question(
             response.status_code = 404
             return {"error": "Question not found"}
         return _build_response(question, current_user.user_id)
+
+
+@router.post("/{question_id}/colab-notebook")
+async def get_or_create_colab_notebook(
+    question_id: int, response: Response, current_user: User = Depends(login_required)
+):
+    with Session(engine) as session:
+        question = session.get(Question, question_id)
+        if not question:
+            response.status_code = 404
+            return {"error": "Question not found"}
+
+        problem = session.get(Problem, question.problem_id)
+        group = session.get(Group, problem.group_id) if problem else None
+        if not group or not _is_member_or_owner(group, current_user):
+            response.status_code = 403
+            return {"error": "Forbidden: You are not a member of this group"}
+
+        if getattr(group, "platform", "codepen") != "colab":
+            response.status_code = 400
+            return {"error": "이 그룹은 Colab 플랫폼이 아닙니다."}
+
+        existing = session.exec(
+            select(ColabNotebook).where(
+                ColabNotebook.question_id == question_id,
+                ColabNotebook.user_id == current_user.user_id,
+            )
+        ).first()
+        if existing:
+            return {
+                "file_id": existing.file_id,
+                "web_view_link": existing.web_view_link,
+                "colab_url": f"https://colab.research.google.com/drive/{existing.file_id}",
+                "created": False,
+            }
+
+        if problem and problem.category and problem.category.type == CategoryType.EXAM:
+            if problem.deadline:
+                deadline_aware = (
+                    problem.deadline if problem.deadline.tzinfo is not None
+                    else problem.deadline.replace(tzinfo=timezone.utc)
+                )
+                if datetime.now(timezone.utc) > deadline_aware:
+                    response.status_code = 403
+                    return {"error": "시험 시간이 종료되어 더 이상 노트북을 생성할 수 없습니다."}
+
+        drive_token = await get_valid_drive_token(group.owner_id)
+        if not drive_token:
+            response.status_code = 400
+            return {
+                "error": "교수님이 아직 Google Drive를 연결하지 않았습니다. 그룹 목록 화면에서 "
+                         "'Google Drive 연결하기'를 먼저 진행해달라고 요청해주세요."
+            }
+
+        try:
+            title = f"{question.title}_{current_user.username}"
+            file_id, web_view_link = await create_notebook_for_student(drive_token, title)
+
+            permission_id = None
+            if current_user.email:
+                permission_id = await share_file_with_email(drive_token, file_id, current_user.email)
+            else:
+                print(f"⚠️ [Colab Notebook] user_id={current_user.user_id}에 이메일이 없어 공유를 건너뜀")
+        except Exception as e:
+            print(f"❌ [Colab Notebook] 생성 실패: {e}")
+            response.status_code = 500
+            return {"error": f"노트북 생성에 실패했습니다. 잠시 후 다시 시도해주세요. ({e})"}
+
+        notebook = ColabNotebook(
+            question_id=question_id,
+            user_id=current_user.user_id,
+            file_id=file_id,
+            web_view_link=web_view_link,
+            permission_id=permission_id,
+        )
+        session.add(notebook)
+        session.commit()
+
+        return {
+            "file_id": file_id,
+            "web_view_link": web_view_link,
+            "colab_url": f"https://colab.research.google.com/drive/{file_id}",
+            "created": True,
+        }
 
 
 @router.get("/problem/{problem_id}")
@@ -473,8 +532,6 @@ async def get_question_attempt_codepen_code(
             file_bytes = supabase.storage.from_("questions").download(file_key_to_read)
             zip_content = io.BytesIO(file_bytes)
         except Exception as e:
-            # 🟢 [수정] 어떤 경로를 찾으려 했는지 같이 찍어서, 업로드 시점 경로와
-            # 조회 시점 경로가 정말 일치하는지(user_id 형식 등) 비교할 수 있게 함
             print(f"❌ [Snapshot Read Error] '{file_key_to_read}' 를 찾지 못함: {e}")
             response.status_code = 404
             return {"error": "저장된 스냅샷이 없습니다."}
@@ -558,9 +615,8 @@ async def get_question_attempt_colab_snapshot(
             cell_type = cell.get("cell_type", "code")
             outputs_text = []
             outputs_images = []
-            # 🟢 [신규] 지금까지 빠져있던 두 가지 출력 타입 보완
-            outputs_html = []    # pandas DataFrame 표, plotly 등 리치 HTML 출력
-            outputs_errors = []  # 셀 실행 중 에러(예외) 발생 시 트레이스백
+            outputs_html = []
+            outputs_errors = []
 
             for out in cell.get("outputs", []):
                 output_type = out.get("output_type")
@@ -578,7 +634,6 @@ async def get_question_attempt_colab_snapshot(
                     text = out.get("text", [])
                     outputs_text.append("".join(text) if isinstance(text, list) else str(text))
                 if output_type == "error":
-                    # 트레이스백엔 터미널 색상용 ANSI 이스케이프 코드가 섞여 있어서 제거
                     raw_traceback = out.get("traceback", [])
                     clean_traceback = [_ANSI_ESCAPE_RE.sub("", line) for line in raw_traceback]
                     outputs_errors.append({
@@ -730,14 +785,7 @@ async def get_question_attempts(
             select(QuestionAttempt).where(QuestionAttempt.question_id == question_id)
         ).all()
 
-        all_submissions = session.exec(
-            select(Submission).where(Submission.problem_id == question.problem_id)
-        ).all()
-
         attempts_map = {str(a.user_id): a for a in all_attempts}
-        submissions_map = {str(s.user_id): s for s in all_submissions}
-
-        # 🟢 이 문제지의 마감(deadline) 기준으로 지각 여부를 계산합니다.
         deadline = problem.deadline if problem else None
 
         result = []
@@ -752,21 +800,9 @@ async def get_question_attempts(
             m_student_no = getattr(member, "student_no", getattr(member, "studentId", m_user_id))
 
             attempt = attempts_map.get(m_user_id)
-            submission = submissions_map.get(m_user_id)
+            last_submitted_at = getattr(attempt, "updated_at", None) if attempt else None
+            attempts_count = attempt.attempts_count if attempt else 0
 
-            last_submitted_at = None
-            if attempt and getattr(attempt, "updated_at", None):
-                last_submitted_at = attempt.updated_at
-            elif submission and getattr(submission, "submitted_at", None):
-                last_submitted_at = submission.submitted_at
-
-            attempts_count = 0
-            if attempt and attempt.attempts_count > 0:
-                attempts_count = attempt.attempts_count
-            elif last_submitted_at:
-                attempts_count = 1
-
-            # 🟢 [신규] 마감(deadline) 이후 제출이면 is_late=True, late_by_minutes에 얼마나 늦었는지(분) 담아 내려줌
             is_late, late_by_minutes = _compute_late_info(deadline, last_submitted_at)
 
             result.append({
@@ -825,7 +861,7 @@ async def grade_attempt(
         session.commit()
         return {"message": "Graded successfully"}
 
-# 🟢 [핵심 수정] 제출 시 프론트가 보낸 codepen_url을 서버가 직접 가져와서(CORS 우회) ZIP으로 묶어 저장
+
 @router.post("/{question_id}/submit")
 async def submit_question(
     question_id: int,
@@ -845,9 +881,6 @@ async def submit_question(
             response.status_code = 403
             return {"error": "Forbidden: You are not a member of this group"}
 
-        # 🟢 [신규] 시험(exam) 카테고리는 일반 문제지와 다르게, 마감(시험 종료) 이후에는
-        # "늦게라도 제출"을 허용하지 않고 아예 막습니다. 일반 문제지는 기존처럼 늦게 제출하면
-        # "제출 늦음"으로 기록만 되고 제출 자체는 계속 허용합니다.
         if problem and problem.category and problem.category.type == CategoryType.EXAM:
             if problem.deadline:
                 deadline_aware = (
@@ -861,11 +894,6 @@ async def submit_question(
                     }
 
         platform = getattr(group, "platform", "codepen")
-
-        # 🟢 [수정] CodePen을 완전히 제거했습니다. 이제 플랫폼은 "colab" 아니면 그 외 전부
-        # "자체 에디터"(과거 'codepen' 문자열을 그대로 쓰지만 의미가 바뀜)입니다. 자체 에디터는
-        # 프론트가 이 페이지 안에서 작성한 html/css/js를 그대로 보내므로, 외부 사이트에서
-        # 긁어올 필요 자체가 없어 CORS/봇차단 문제가 구조적으로 존재하지 않습니다.
         fetched_html, fetched_css, fetched_js = "", "", ""
 
         if platform != "colab":
@@ -874,11 +902,6 @@ async def submit_question(
                 response.status_code = 400
                 return {"error": "제출할 코드가 비어 있습니다. HTML/CSS/JS 중 하나 이상 작성해주세요."}
 
-        # 🟢 [수정] 순서를 바꿨습니다. 예전에는 QuestionAttempt(제출 횟수/시각)를 먼저 저장하고
-        # '그 다음에' 파일 업로드를 시도했습니다. 그러면 업로드가 실패해도(GOOGLE_DRIVE_API_KEY
-        # 미설정, Supabase 문제 등) "제출 횟수: 1회"라는 기록은 이미 남아버려서, 교수 화면엔
-        # "제출함"으로 보이는데 실제로 열어보면 파일이 없는 불일치가 생겼습니다.
-        # 이제는 파일 저장을 먼저 "시도"하고, 그게 성공했을 때만 QuestionAttempt를 기록합니다.
         if supabase is None:
             response.status_code = 500
             return {
@@ -890,7 +913,41 @@ async def submit_question(
 
         try:
             if platform == "colab":
-                snapshot_bytes = await download_colab_snapshot(body.codepen_url)
+                snapshot_bytes = None
+                oauth_error = None
+                drive_token = await get_valid_drive_token(group.owner_id)
+                if drive_token:
+                    try:
+                        file_id = get_colab_file_id(body.codepen_url)
+                        snapshot_bytes = await download_notebook_with_oauth(drive_token, file_id)
+                    except Exception as e:
+                        oauth_error = e
+                        print(f"⚠️ [Colab Snapshot] OAuth 다운로드 실패, API 키 방식으로 재시도: {e}")
+
+                if snapshot_bytes is None:
+                    try:
+                        snapshot_bytes = await download_colab_snapshot(body.codepen_url)
+                    except Exception as e:
+                        raise oauth_error or e
+
+                try:
+                    notebook_json = json.loads(snapshot_bytes)
+                    code_cells = [c for c in notebook_json.get("cells", []) if c.get("cell_type") == "code"]
+                    has_any_output = any(c.get("outputs") for c in code_cells)
+                    has_any_source = any("".join(c.get("source", [])).strip() for c in code_cells)
+                    if code_cells and has_any_source and not has_any_output:
+                        response.status_code = 400
+                        return {
+                            "error": (
+                                "코드는 작성되어 있지만 한 번도 실행되지 않았어요. Colab에서 "
+                                "'런타임 → 모두 실행'(또는 Ctrl/Cmd+F9)으로 셀을 전부 실행하고 "
+                                "저장한 뒤 다시 제출해주세요. 실행하지 않으면 채점 화면에 결과가 "
+                                "보이지 않아요."
+                            )
+                        }
+                except json.JSONDecodeError:
+                    pass
+
                 file_key = f"question_attempts/{question_id}_{current_user.user_id}.ipynb"
                 supabase.storage.from_("questions").upload(
                     path=file_key,
@@ -899,7 +956,6 @@ async def submit_question(
                 )
                 print(f"✅ [Colab Snapshot] 성공적으로 저장됨: {file_key}")
             else:
-                # 🟢 [수정] 프론트가 보낸 값이 아니라, 위에서 서버가 직접 받아온 코드로 ZIP 생성
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     zip_file.writestr("index.html", fetched_html or "")
@@ -914,9 +970,6 @@ async def submit_question(
                 )
                 print(f"✅ [자체 에디터 Snapshot] 학생이 작성한 코드로 ZIP 저장 완료: {file_key}")
         except Exception as e:
-            # 🟢 [수정] 파일 저장이 실패하면 여기서 끝냅니다. QuestionAttempt는 아직 손대지
-            # 않았으니(아래에서 저장 성공 후에만 기록), "제출 기록만 남고 파일은 없는" 상태가
-            # 생기지 않습니다. 학생은 안심하고 그대로 다시 제출하면 됩니다.
             print(f"❌ [Snapshot Error] {platform} 스냅샷 업로드 실패: {e}")
             response.status_code = 500
             return {
@@ -926,7 +979,6 @@ async def submit_question(
                 )
             }
 
-        # 🟢 파일 저장이 성공한 뒤에만 제출 기록(QuestionAttempt)을 남깁니다.
         attempt = session.exec(
             select(QuestionAttempt).where(
                 QuestionAttempt.question_id == question_id,
@@ -953,8 +1005,6 @@ async def submit_question(
         session.commit()
         session.refresh(attempt)
 
-        # 🟢 이 문제지(problem)의 마감(deadline)과 지금(now)을 비교해 지각 여부를 서버 기준으로 계산.
-        # 프론트가 브라우저 로컬 시계로 판단하는 대신 이 값을 우선 사용하도록 함께 내려줍니다.
         is_late, late_by_minutes = _compute_late_info(problem.deadline if problem else None, now)
 
         return {
@@ -965,6 +1015,7 @@ async def submit_question(
             "late_by_minutes": late_by_minutes,
             "deadline": problem.deadline if problem else None,
         }
+
 
 class SaveScoreBody(BaseModel):
     score: float
